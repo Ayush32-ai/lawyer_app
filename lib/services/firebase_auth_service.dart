@@ -32,18 +32,51 @@ class FirebaseAuthService extends ChangeNotifier {
     required String password,
   }) async {
     try {
+      debugPrint('🔐 Starting login process for: $email');
+      debugPrint('🔑 Password length: ${password.length}');
+
+      // Check if user exists first
+      try {
+        final methods = await _auth.fetchSignInMethodsForEmail(email);
+        debugPrint('📧 Sign-in methods for $email: $methods');
+        if (methods.isEmpty) {
+          debugPrint('❌ No sign-in methods found for email: $email');
+          throw 'No account found with this email address. Please sign up first.';
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not check sign-in methods: $e');
+      }
+
+      debugPrint('🚀 Attempting Firebase Auth sign in...');
       final firebase_auth.UserCredential result = await _auth
           .signInWithEmailAndPassword(email: email, password: password);
 
       if (result.user != null) {
-        await _loadUserProfile();
+        debugPrint('✅ Firebase Auth login successful: ${result.user!.uid}');
+        debugPrint('👤 User email: ${result.user!.email}');
+        debugPrint('👤 User display name: ${result.user!.displayName}');
+
+        try {
+          await _loadUserProfile();
+          debugPrint('✅ User profile loaded after login');
+        } catch (e) {
+          debugPrint('⚠️ Could not load user profile: $e');
+        }
+      } else {
+        debugPrint('❌ Login result is null');
       }
 
       return result;
     } on firebase_auth.FirebaseAuthException catch (e) {
+      debugPrint(
+        '🔥 Firebase Auth Exception during login: ${e.code} - ${e.message}',
+      );
+      debugPrint('🔥 Exception details: ${e.toString()}');
       throw _handleAuthException(e);
     } catch (e) {
-      throw 'An unexpected error occurred. Please try again.';
+      debugPrint('❌ Unexpected error during login: $e');
+      debugPrint('❌ Error type: ${e.runtimeType}');
+      throw 'An unexpected error occurred during login. Please try again.';
     }
   }
 
@@ -56,54 +89,90 @@ class FirebaseAuthService extends ChangeNotifier {
     required Map<String, dynamic> additionalData,
   }) async {
     try {
+      debugPrint('🔐 Starting signup process for: $email');
+      debugPrint('👤 User type: ${userType.name}');
+      debugPrint('📝 Additional data: $additionalData');
+
       final firebase_auth.UserCredential result = await _auth
           .createUserWithEmailAndPassword(email: email, password: password);
 
       if (result.user != null) {
-        // Update display name
-        await result.user!.updateDisplayName(name);
+        debugPrint('✅ Firebase Auth user created: ${result.user!.uid}');
 
-        // Create user profile in Firestore
-        await _createUserProfile(
+        // Update display name
+        try {
+          await result.user!.updateDisplayName(name);
+          debugPrint('✅ Display name updated: $name');
+        } catch (e) {
+          debugPrint('⚠️ Could not update display name: $e');
+        }
+
+        // Create user profile in Firestore (don't wait for completion)
+        _createUserProfileInBackground(
           user: result.user!,
           name: name,
           userType: userType,
           additionalData: additionalData,
         );
 
-        await _loadUserProfile();
+        // Don't wait for profile loading - return success immediately
+        debugPrint(
+          '✅ Signup completed successfully for: ${result.user!.email}',
+        );
       }
 
       return result;
     } on firebase_auth.FirebaseAuthException catch (e) {
+      debugPrint(
+        '🔥 Firebase Auth Exception during signup: ${e.code} - ${e.message}',
+      );
       throw _handleAuthException(e);
     } catch (e) {
-      throw 'An unexpected error occurred. Please try again.';
+      debugPrint('❌ Unexpected error during signup: $e');
+      throw 'An unexpected error occurred during signup. Please try again.';
     }
   }
 
-  /// Create user profile in Firestore
-  Future<void> _createUserProfile({
+  /// Create user profile in Firestore in background (non-blocking)
+  Future<void> _createUserProfileInBackground({
     required firebase_auth.User user,
     required String name,
     required UserType userType,
     required Map<String, dynamic> additionalData,
   }) async {
     try {
+      debugPrint('📝 Creating user profile in Firestore for: ${user.uid}');
+
       final profileData = {
         'uid': user.uid,
         'email': user.email,
         'name': name,
         'userType': userType.name,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
+        'createdAt': DateTime.now()
+            .toIso8601String(), // Use local timestamp instead of server timestamp
+        'updatedAt': DateTime.now().toIso8601String(),
         ...additionalData,
       };
 
+      debugPrint('📊 Profile data to save: $profileData');
+
       await _firestore.collection('users').doc(user.uid).set(profileData);
+      debugPrint('✅ User profile saved to Firestore successfully');
+
+      // Verify the data was saved
+      final savedDoc = await _firestore.collection('users').doc(user.uid).get();
+      if (savedDoc.exists) {
+        debugPrint('✅ Verified: User profile exists in Firestore');
+        debugPrint('📄 Saved data: ${savedDoc.data()}');
+      } else {
+        debugPrint(
+          '❌ Verification failed: User profile not found in Firestore',
+        );
+      }
     } catch (e) {
-      debugPrint('Error creating user profile: $e');
-      rethrow;
+      debugPrint('❌ Error creating user profile: $e');
+      debugPrint('❌ Error details: ${e.runtimeType}');
+      // Don't rethrow - this is background process
     }
   }
 
@@ -177,13 +246,112 @@ class FirebaseAuthService extends ChangeNotifier {
     }
   }
 
+  /// Check if a user exists in Firebase Auth
+  Future<bool> userExists(String email) async {
+    try {
+      final methods = await _auth.fetchSignInMethodsForEmail(email);
+      return methods.isNotEmpty;
+    } catch (e) {
+      debugPrint('Error checking if user exists: $e');
+      return false;
+    }
+  }
+
+  /// Check if user profile exists in Firestore
+  Future<bool> userProfileExists(String uid) async {
+    try {
+      final doc = await _firestore.collection('users').doc(uid).get();
+      return doc.exists;
+    } catch (e) {
+      debugPrint('Error checking if user profile exists: $e');
+      return false;
+    }
+  }
+
+  /// Get user profile from Firestore by UID
+  Future<Map<String, dynamic>?> getUserProfile(String uid) async {
+    try {
+      final doc = await _firestore.collection('users').doc(uid).get();
+      if (doc.exists) {
+        return doc.data();
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error getting user profile: $e');
+      return null;
+    }
+  }
+
+  /// Get available sign-in methods for an email
+  Future<List<String>> getSignInMethods(String email) async {
+    try {
+      return await _auth.fetchSignInMethodsForEmail(email);
+    } catch (e) {
+      debugPrint('Error getting sign-in methods: $e');
+      return [];
+    }
+  }
+
+  /// Create a test user account for development (use only in development)
+  Future<firebase_auth.UserCredential?> createTestUser({
+    required String email,
+    required String password,
+    required String name,
+  }) async {
+    try {
+      debugPrint('👤 Creating test user: $email');
+
+      // Check if user already exists
+      final methods = await _auth.fetchSignInMethodsForEmail(email);
+      if (methods.isNotEmpty) {
+        debugPrint('⚠️ User already exists: $email');
+        return null;
+      }
+
+      // Create user with email and password
+      final userCredential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      if (userCredential.user != null) {
+        // Update display name
+        await userCredential.user!.updateDisplayName(name);
+
+        // Create user profile in Firestore
+        await _createUserProfileInBackground(
+          user: userCredential.user!,
+          name: name,
+          userType: UserType.client,
+          additionalData: {
+            'phoneNumber': '+1 (555) 000-0000',
+            'address': '123 Test Street, Test City, TC 12345',
+          },
+        );
+
+        debugPrint('✅ Test user created successfully: $email');
+        return userCredential;
+      }
+
+      return null;
+    } on firebase_auth.FirebaseAuthException catch (e) {
+      debugPrint('❌ Error creating test user: ${e.code} - ${e.message}');
+      throw _handleAuthException(e);
+    } catch (e) {
+      debugPrint('❌ Unexpected error creating test user: $e');
+      throw 'Failed to create test user. Please try again.';
+    }
+  }
+
   /// Handle Firebase Auth exceptions
   String _handleAuthException(firebase_auth.FirebaseAuthException e) {
+    debugPrint('🔥 Firebase Auth Exception: ${e.code} - ${e.message}');
+
     switch (e.code) {
       case 'user-not-found':
-        return 'No user found with this email address.';
+        return 'No user found with this email address. Please sign up first.';
       case 'wrong-password':
-        return 'Wrong password provided.';
+        return 'Wrong password provided. Please check your password.';
       case 'email-already-in-use':
         return 'An account already exists with this email address.';
       case 'invalid-email':
@@ -198,8 +366,125 @@ class FirebaseAuthService extends ChangeNotifier {
         return 'This sign-in method is not allowed.';
       case 'network-request-failed':
         return 'Network error. Please check your connection.';
+      case 'invalid-credential':
+        return 'Invalid email or password. Please check your credentials.';
+      case 'user-mismatch':
+        return 'User mismatch error. Please try again.';
+      case 'requires-recent-login':
+        return 'This operation requires recent authentication. Please log in again.';
+      case 'credential-already-in-use':
+        return 'This credential is already associated with another account.';
       default:
-        return 'Authentication failed. Please try again.';
+        debugPrint('🔥 Unhandled Firebase Auth Exception: ${e.code}');
+        return 'Authentication failed: ${e.code}. Please try again.';
     }
+  }
+
+  /// Test Firebase connectivity and permissions
+  Future<Map<String, dynamic>> testFirebaseConnectivity() async {
+    final results = <String, dynamic>{};
+
+    try {
+      debugPrint('🧪 Testing Firebase connectivity...');
+
+      // Test Firestore write permission
+      try {
+        final testDoc = _firestore.collection('_test').doc('connectivity');
+        await testDoc.set({
+          'timestamp': FieldValue.serverTimestamp(),
+          'test': true,
+        });
+        debugPrint('✅ Firestore write test: PASSED');
+        results['firestore_write'] = true;
+
+        // Clean up test document
+        await testDoc.delete();
+        debugPrint('✅ Test document cleaned up');
+      } catch (e) {
+        debugPrint('❌ Firestore write test: FAILED - $e');
+        results['firestore_write'] = false;
+        results['firestore_error'] = e.toString();
+      }
+
+      // Test Firestore read permission
+      try {
+        final testDoc = await _firestore.collection('users').limit(1).get();
+        debugPrint(
+          '✅ Firestore read test: PASSED (${testDoc.docs.length} docs)',
+        );
+        results['firestore_read'] = true;
+      } catch (e) {
+        debugPrint('❌ Firestore read test: FAILED - $e');
+        results['firestore_read'] = false;
+        results['firestore_read_error'] = e.toString();
+      }
+
+      // Test Firebase Auth
+      try {
+        final currentUser = _auth.currentUser;
+        debugPrint(
+          '✅ Firebase Auth test: PASSED (current user: ${currentUser?.uid ?? 'none'})',
+        );
+        results['firebase_auth'] = true;
+      } catch (e) {
+        debugPrint('❌ Firebase Auth test: FAILED - $e');
+        results['firebase_auth'] = false;
+        results['firebase_auth_error'] = e.toString();
+      }
+    } catch (e) {
+      debugPrint('❌ Firebase connectivity test failed: $e');
+      results['overall'] = false;
+      results['error'] = e.toString();
+    }
+
+    debugPrint('🧪 Firebase connectivity test results: $results');
+    return results;
+  }
+
+  /// Check Firebase project configuration
+  Future<Map<String, dynamic>> checkFirebaseConfig() async {
+    final config = <String, dynamic>{};
+
+    try {
+      debugPrint('🔧 Checking Firebase configuration...');
+
+      // Check Firebase Auth config
+      try {
+        final authConfig = _auth.app.options;
+        config['project_id'] = authConfig.projectId;
+        config['api_key'] = authConfig.apiKey;
+        config['app_id'] = authConfig.appId;
+        config['storage_bucket'] = authConfig.storageBucket;
+        debugPrint('✅ Firebase Auth config: ${authConfig.projectId}');
+      } catch (e) {
+        debugPrint('❌ Firebase Auth config error: $e');
+        config['auth_config_error'] = e.toString();
+      }
+
+      // Check Firestore config
+      try {
+        final firestoreConfig = _firestore.app.options;
+        config['firestore_project_id'] = firestoreConfig.projectId;
+        config['firestore_api_key'] = firestoreConfig.apiKey;
+        debugPrint('✅ Firestore config: ${firestoreConfig.projectId}');
+      } catch (e) {
+        debugPrint('❌ Firestore config error: $e');
+        config['firestore_config_error'] = e.toString();
+      }
+
+      // Check if configs match
+      if (config['project_id'] != null &&
+          config['firestore_project_id'] != null) {
+        config['configs_match'] =
+            config['project_id'] == config['firestore_project_id'];
+        debugPrint('🔍 Configs match: ${config['configs_match']}');
+      }
+    } catch (e) {
+      debugPrint('❌ Firebase config check failed: $e');
+      config['error'] = e.toString();
+    }
+
+    debugPrint('🔧 Firebase config: $config');
+    return config;
   }
 }

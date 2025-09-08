@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import '../services/auth_service.dart';
+import '../services/firebase_auth_service.dart';
+import '../services/location_service.dart';
 import 'location_input_screen.dart';
 import 'forgot_password_screen.dart';
 import 'signup_screen.dart';
+import 'debug_database_screen.dart';
+import 'package:flutter/foundation.dart';
+import 'dashboard_screen.dart'; // Added import for DashboardScreen
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -33,26 +37,77 @@ class _LoginScreenState extends State<LoginScreen> {
         _isLoading = true;
       });
 
-      final authService = Provider.of<AuthService>(context, listen: false);
-
-      // Attempt login
-      final success = await authService.login(
-        _emailController.text.trim(),
-        _passwordController.text,
-      );
-
-      if (success && mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const LocationInputScreen()),
+      try {
+        debugPrint(
+          '🔐 Attempting login with email: ${_emailController.text.trim()}',
         );
-      } else {
-        _showErrorDialog('Invalid credentials. Please try again.');
-      }
 
-      setState(() {
-        _isLoading = false;
-      });
+        final firebaseAuthService = Provider.of<FirebaseAuthService>(
+          context,
+          listen: false,
+        );
+
+        // Attempt login with Firebase directly
+        final userCredential = await firebaseAuthService
+            .signInWithEmailAndPassword(
+              email: _emailController.text.trim(),
+              password: _passwordController.text,
+            );
+
+        if (userCredential != null && userCredential.user != null && mounted) {
+          debugPrint(
+            '✅ Login successful for user: ${userCredential.user!.email}',
+          );
+
+          // Check if user has saved location
+          final hasSavedLocation = await _checkUserHasSavedLocation(
+            userCredential.user!.uid,
+          );
+
+          if (hasSavedLocation) {
+            // User has saved location, get it and go to dashboard
+            final savedLocation = await LocationService.getUserLocation(
+              userCredential.user!.uid,
+            );
+            final locationAddress =
+                savedLocation?['address'] ?? 'Unknown Location';
+
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    DashboardScreen(location: locationAddress),
+              ),
+            );
+          } else {
+            // No saved location, go to location input screen
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const LocationInputScreen(),
+              ),
+            );
+          }
+        } else {
+          debugPrint('❌ Login failed: userCredential is null');
+          if (mounted) {
+            _showErrorDialog(
+              'Login failed. Please check your credentials and try again.',
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint('❌ Login error: $e');
+        if (mounted) {
+          _showErrorDialog(e.toString());
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
     }
   }
 
@@ -76,6 +131,276 @@ class _LoginScreenState extends State<LoginScreen> {
         ],
       ),
     );
+  }
+
+  void _showSignUpPrompt() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Account Not Found',
+          style: GoogleFonts.roboto(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          'No account found with this email address. Would you like to create a new account?',
+          style: GoogleFonts.roboto(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.roboto(color: Colors.grey[600]),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SignUpScreen()),
+              );
+            },
+            child: Text(
+              'Sign Up',
+              style: GoogleFonts.roboto(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _createTestAccount() async {
+    final firebaseAuthService = Provider.of<FirebaseAuthService>(
+      context,
+      listen: false,
+    );
+
+    try {
+      debugPrint('🔐 Attempting to create test account: test@lawyerapp.com');
+      final userCredential = await firebaseAuthService.createTestUser(
+        email: 'test@lawyerapp.com',
+        password: 'test123456',
+        name: 'Test User',
+      );
+
+      if (userCredential != null && userCredential.user != null && mounted) {
+        debugPrint(
+          '✅ Test account created successfully for user: ${userCredential.user!.email}',
+        );
+        if (mounted) {
+          _showSuccessDialog('Test account created successfully!');
+        }
+      } else {
+        debugPrint('❌ Failed to create test account: userCredential is null');
+        if (mounted) {
+          _showErrorDialog('Failed to create test account. Please try again.');
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error creating test account: $e');
+      if (mounted) {
+        _showErrorDialog(e.toString());
+      }
+    }
+  }
+
+  void _showSuccessDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Success',
+          style: GoogleFonts.roboto(fontWeight: FontWeight.bold),
+        ),
+        content: Text(message, style: GoogleFonts.roboto()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'OK',
+              style: GoogleFonts.roboto(color: const Color(0xFF2196F3)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _testFirebaseConnectivity() async {
+    try {
+      final firebaseAuthService = Provider.of<FirebaseAuthService>(
+        context,
+        listen: false,
+      );
+
+      debugPrint('🧪 Testing Firebase connectivity...');
+      final results = await firebaseAuthService.testFirebaseConnectivity();
+
+      if (mounted) {
+        _showConnectivityResults(results);
+      }
+    } catch (e) {
+      debugPrint('❌ Error testing Firebase connectivity: $e');
+      if (mounted) {
+        _showErrorDialog('Failed to test Firebase connectivity: $e');
+      }
+    }
+  }
+
+  void _showConnectivityResults(Map<String, dynamic> results) {
+    String message = 'Firebase Connectivity Test Results:\n\n';
+
+    if (results['firestore_write'] == true) {
+      message += '✅ Firestore Write: PASSED\n';
+    } else {
+      message += '❌ Firestore Write: FAILED\n';
+      if (results['firestore_error'] != null) {
+        message += '   Error: ${results['firestore_error']}\n';
+      }
+    }
+
+    if (results['firestore_read'] == true) {
+      message += '✅ Firestore Read: PASSED\n';
+    } else {
+      message += '❌ Firestore Read: FAILED\n';
+      if (results['firestore_read_error'] != null) {
+        message += '   Error: ${results['firestore_read_error']}\n';
+      }
+    }
+
+    if (results['firebase_auth'] == true) {
+      message += '✅ Firebase Auth: PASSED\n';
+    } else {
+      message += '❌ Firebase Auth: FAILED\n';
+      if (results['firebase_auth_error'] != null) {
+        message += '   Error: ${results['firebase_auth_error']}\n';
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Firebase Connectivity Test',
+          style: GoogleFonts.roboto(fontWeight: FontWeight.bold),
+        ),
+        content: Text(message, style: GoogleFonts.roboto()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'OK',
+              style: GoogleFonts.roboto(color: const Color(0xFF2196F3)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _testLogin() async {
+    _emailController.text = 'test@lawyerapp.com';
+    _passwordController.text = 'test123456';
+    await _login();
+  }
+
+  Future<void> _checkFirebaseConfig() async {
+    final firebaseAuthService = Provider.of<FirebaseAuthService>(
+      context,
+      listen: false,
+    );
+
+    try {
+      debugPrint('🧪 Checking Firebase configuration...');
+      final config = await firebaseAuthService.checkFirebaseConfig();
+
+      if (mounted) {
+        _showConfigResults(config);
+      }
+    } catch (e) {
+      debugPrint('❌ Error checking Firebase config: $e');
+      if (mounted) {
+        _showErrorDialog('Failed to check Firebase config: $e');
+      }
+    }
+  }
+
+  void _showConfigResults(Map<String, dynamic> config) {
+    String message = 'Firebase Configuration Check Results:\n\n';
+
+    if (config['project_id'] != null) {
+      message += '✅ Project ID: ${config['project_id']}\n';
+    } else {
+      message += '❌ Project ID: FAILED\n';
+      if (config['auth_config_error'] != null) {
+        message += '   Error: ${config['auth_config_error']}\n';
+      }
+    }
+
+    if (config['api_key'] != null) {
+      message +=
+          '✅ API Key: ${config['api_key'].toString().substring(0, 10)}...\n';
+    } else {
+      message += '❌ API Key: FAILED\n';
+    }
+
+    if (config['app_id'] != null) {
+      message += '✅ App ID: ${config['app_id']}\n';
+    } else {
+      message += '❌ App ID: FAILED\n';
+    }
+
+    if (config['storage_bucket'] != null) {
+      message += '✅ Storage Bucket: ${config['storage_bucket']}\n';
+    } else {
+      message += '❌ Storage Bucket: FAILED\n';
+    }
+
+    if (config['firestore_project_id'] != null) {
+      message += '✅ Firestore Project ID: ${config['firestore_project_id']}\n';
+    } else {
+      message += '❌ Firestore Project ID: FAILED\n';
+      if (config['firestore_config_error'] != null) {
+        message += '   Error: ${config['firestore_config_error']}\n';
+      }
+    }
+
+    if (config['configs_match'] != null) {
+      message +=
+          '🔍 Configs Match: ${config['configs_match'] ? 'YES' : 'NO'}\n';
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Firebase Configuration Check',
+          style: GoogleFonts.roboto(fontWeight: FontWeight.bold),
+        ),
+        content: Text(message, style: GoogleFonts.roboto()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'OK',
+              style: GoogleFonts.roboto(color: const Color(0xFF2196F3)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // New method to check if user has saved location
+  Future<bool> _checkUserHasSavedLocation(String userId) async {
+    try {
+      return await LocationService.hasUserLocation(userId);
+    } catch (e) {
+      debugPrint('❌ Error checking user location: $e');
+      return false;
+    }
   }
 
   @override
@@ -330,7 +655,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
-                                  'Demo Credentials',
+                                  'Firebase Authentication',
                                   style: GoogleFonts.roboto(
                                     fontWeight: FontWeight.w600,
                                     color: Colors.blue[700],
@@ -340,13 +665,157 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Use any email and password (min 6 chars) to login',
+                              'You need to create an account first or use existing Firebase credentials',
                               style: GoogleFonts.roboto(
                                 fontSize: 12,
                                 color: Colors.blue[600],
                               ),
                               textAlign: TextAlign.center,
                             ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Test Account: test@lawyerapp.com / test123456',
+                              style: GoogleFonts.roboto(
+                                fontSize: 11,
+                                color: Colors.blue[500],
+                                fontWeight: FontWeight.w500,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 12),
+                            // Development: Create Test Account Button
+                            if (kDebugMode)
+                              SizedBox(
+                                width: double.infinity,
+                                height: 36,
+                                child: OutlinedButton(
+                                  onPressed: () => _createTestAccount(),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.blue[700],
+                                    side: BorderSide(color: Colors.blue[300]!),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Create Test Account (Dev)',
+                                    style: GoogleFonts.roboto(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (kDebugMode) const SizedBox(height: 8),
+                            // Development: Test Firebase Connectivity Button
+                            if (kDebugMode)
+                              SizedBox(
+                                width: double.infinity,
+                                height: 36,
+                                child: OutlinedButton(
+                                  onPressed: () => _testFirebaseConnectivity(),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.orange[700],
+                                    side: BorderSide(
+                                      color: Colors.orange[300]!,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Test Firebase Connectivity (Dev)',
+                                    style: GoogleFonts.roboto(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (kDebugMode) const SizedBox(height: 8),
+                            // Development: Test Login Button
+                            if (kDebugMode)
+                              SizedBox(
+                                width: double.infinity,
+                                height: 36,
+                                child: OutlinedButton(
+                                  onPressed: () => _testLogin(),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.green[700],
+                                    side: BorderSide(color: Colors.green[300]!),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Test Login (Dev)',
+                                    style: GoogleFonts.roboto(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (kDebugMode) const SizedBox(height: 8),
+                            // Development: Check Firebase Config Button
+                            if (kDebugMode)
+                              SizedBox(
+                                width: double.infinity,
+                                height: 36,
+                                child: OutlinedButton(
+                                  onPressed: () => _checkFirebaseConfig(),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.purple[700],
+                                    side: BorderSide(
+                                      color: Colors.purple[300]!,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Check Firebase Config (Dev)',
+                                    style: GoogleFonts.roboto(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (kDebugMode) const SizedBox(height: 8),
+                            // Development: Debug Database Button
+                            if (kDebugMode)
+                              SizedBox(
+                                width: double.infinity,
+                                height: 36,
+                                child: OutlinedButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const DebugDatabaseScreen(),
+                                      ),
+                                    );
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.orange[700],
+                                    side: BorderSide(
+                                      color: Colors.orange[300]!,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Debug Database (Dev)',
+                                    style: GoogleFonts.roboto(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                       ),

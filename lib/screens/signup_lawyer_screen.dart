@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import '../services/auth_service.dart';
+import '../services/firebase_auth_service.dart';
 import '../models/user_type.dart';
 import 'location_input_screen.dart';
 
@@ -62,32 +62,69 @@ class _SignUpLawyerScreenState extends State<SignUpLawyerScreen> {
         _isLoading = true;
       });
 
-      final authService = Provider.of<AuthService>(context, listen: false);
-
-      // Simulate sign up process
-      final success = await authService.signUp(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-        name: _nameController.text.trim(),
-        userType: UserType.lawyer,
-        licenseNumber: _licenseController.text.trim(),
-        specialty: _selectedSpecialty ?? _specialtyController.text.trim(),
-        yearsOfExperience: int.tryParse(_experienceController.text),
-        bio: _bioController.text.trim(),
-      );
-
-      if (success && mounted) {
-        Navigator.pushReplacement(
+      try {
+        final firebaseAuthService = Provider.of<FirebaseAuthService>(
           context,
-          MaterialPageRoute(builder: (context) => const LocationInputScreen()),
+          listen: false,
         );
-      } else {
-        _showErrorDialog('Sign up failed. Please try again.');
-      }
 
-      setState(() {
-        _isLoading = false;
-      });
+        debugPrint(
+          '🔐 Attempting to create lawyer account: ${_emailController.text.trim()}',
+        );
+
+        // Create user with Firebase Auth
+        final userCredential = await firebaseAuthService
+            .signUpWithEmailAndPassword(
+              email: _emailController.text.trim(),
+              password: _passwordController.text,
+              name: _nameController.text.trim(),
+              userType: UserType.lawyer,
+              additionalData: {
+                'licenseNumber': _licenseController.text.trim(),
+                'specialty':
+                    _selectedSpecialty ?? _specialtyController.text.trim(),
+                'yearsOfExperience': int.tryParse(_experienceController.text),
+                'bio': _bioController.text.trim(),
+                'isVerified': false, // Lawyers need verification
+              },
+            )
+            .timeout(
+              const Duration(seconds: 30),
+              onTimeout: () {
+                throw 'Signup timed out. Please try again.';
+              },
+            );
+
+        if (userCredential != null && userCredential.user != null && mounted) {
+          debugPrint(
+            '✅ Lawyer account created successfully: ${userCredential.user!.email}',
+          );
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const LocationInputScreen(),
+            ),
+          );
+        } else {
+          debugPrint(
+            '❌ Failed to create lawyer account: userCredential is null',
+          );
+          if (mounted) {
+            _showErrorDialog('Sign up failed. Please try again.');
+          }
+        }
+      } catch (e) {
+        debugPrint('❌ Error creating lawyer account: $e');
+        if (mounted) {
+          _showErrorDialog(e.toString());
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
     } else if (!_agreeToTerms) {
       _showErrorDialog('Please agree to the Terms and Conditions');
     }
@@ -467,4 +504,3 @@ class _SignUpLawyerScreenState extends State<SignUpLawyerScreen> {
     );
   }
 }
-

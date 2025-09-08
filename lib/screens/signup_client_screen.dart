@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import '../services/auth_service.dart';
+import '../services/firebase_auth_service.dart';
 import '../models/user_type.dart';
 import 'location_input_screen.dart';
 
@@ -43,30 +43,92 @@ class _SignUpClientScreenState extends State<SignUpClientScreen> {
         _isLoading = true;
       });
 
-      final authService = Provider.of<AuthService>(context, listen: false);
-
-      // Simulate sign up process
-      final success = await authService.signUp(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-        name: _nameController.text.trim(),
-        userType: UserType.client,
-        phoneNumber: _phoneController.text.trim(),
-        address: _addressController.text.trim(),
-      );
-
-      if (success && mounted) {
-        Navigator.pushReplacement(
+      try {
+        final firebaseAuthService = Provider.of<FirebaseAuthService>(
           context,
-          MaterialPageRoute(builder: (context) => const LocationInputScreen()),
+          listen: false,
         );
-      } else {
-        _showErrorDialog('Sign up failed. Please try again.');
-      }
 
-      setState(() {
-        _isLoading = false;
-      });
+        debugPrint(
+          '🔐 Attempting to create client account: ${_emailController.text.trim()}',
+        );
+
+        // Create user with Firebase Auth with timeout
+        final userCredential = await firebaseAuthService
+            .signUpWithEmailAndPassword(
+              email: _emailController.text.trim(),
+              password: _passwordController.text,
+              name: _nameController.text.trim(),
+              userType: UserType.client,
+              additionalData: {
+                'phoneNumber': _phoneController.text.trim(),
+                'address': _addressController.text.trim(),
+              },
+            )
+            .timeout(
+              const Duration(seconds: 30),
+              onTimeout: () {
+                throw 'Signup timed out. Please try again.';
+              },
+            );
+
+        if (userCredential != null && userCredential.user != null && mounted) {
+          debugPrint(
+            '✅ Client account created successfully: ${userCredential.user!.email}',
+          );
+
+          // Verify profile creation
+          try {
+            final profileExists = await firebaseAuthService.userProfileExists(
+              userCredential.user!.uid,
+            );
+            if (profileExists) {
+              debugPrint('✅ User profile verified in Firestore');
+            } else {
+              debugPrint(
+                '⚠️ User profile not found in Firestore - will be created in background',
+              );
+            }
+          } catch (e) {
+            debugPrint('⚠️ Could not verify profile: $e');
+          }
+
+          // Show success message before navigation
+          if (mounted) {
+            _showSuccessDialog('Account created successfully! Redirecting...');
+          }
+
+          // Navigate after a short delay to show success message
+          Future.delayed(const Duration(seconds: 2), () {
+            if (mounted) {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const LocationInputScreen(),
+                ),
+              );
+            }
+          });
+        } else {
+          debugPrint(
+            '❌ Failed to create client account: userCredential is null',
+          );
+          if (mounted) {
+            _showErrorDialog('Sign up failed. Please try again.');
+          }
+        }
+      } catch (e) {
+        debugPrint('❌ Error creating client account: $e');
+        if (mounted) {
+          _showErrorDialog(e.toString());
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
     } else if (!_agreeToTerms) {
       _showErrorDialog('Please agree to the Terms and Conditions');
     }
@@ -87,6 +149,28 @@ class _SignUpClientScreenState extends State<SignUpClientScreen> {
             child: Text(
               'OK',
               style: GoogleFonts.roboto(color: const Color(0xFF2196F3)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSuccessDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Success!',
+          style: GoogleFonts.roboto(fontWeight: FontWeight.bold),
+        ),
+        content: Text(message, style: GoogleFonts.roboto()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'OK',
+              style: GoogleFonts.roboto(color: const Color(0xFF4CAF50)),
             ),
           ),
         ],
@@ -326,13 +410,26 @@ class _SignUpClientScreenState extends State<SignUpClientScreen> {
                         elevation: 0,
                       ),
                       child: _isLoading
-                          ? const SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
+                          ? Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  'Creating Account...',
+                                  style: GoogleFonts.roboto(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
                             )
                           : Text(
                               'Create Account',
@@ -387,4 +484,3 @@ class _SignUpClientScreenState extends State<SignUpClientScreen> {
     );
   }
 }
-

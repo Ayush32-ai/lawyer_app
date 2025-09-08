@@ -14,10 +14,43 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize Firebase
-  await Firebase.initializeApp();
+  try {
+    debugPrint('🔥 Initializing Firebase...');
+    await Firebase.initializeApp();
+    debugPrint('✅ Firebase initialized successfully');
+  } catch (e) {
+    debugPrint('❌ Firebase initialization failed: $e');
+    // Continue with app initialization even if Firebase fails
+  }
 
   // Initialize Firestore Database with sample data
-  await DatabaseInitService.initializeDatabase();
+  try {
+    await DatabaseInitService.initializeDatabase();
+    debugPrint('✅ Database initialization complete');
+  } catch (e) {
+    debugPrint('❌ Database initialization failed: $e');
+  }
+
+  // Create test user for development (optional)
+  try {
+    await DatabaseInitService.createTestUser();
+    debugPrint('✅ Test user creation complete');
+  } catch (e) {
+    debugPrint('❌ Test user creation failed: $e');
+  }
+
+  // Create test user in Firebase Auth
+  try {
+    final firebaseAuthService = FirebaseAuthService();
+    await firebaseAuthService.createTestUser(
+      email: 'test@lawyerapp.com',
+      password: 'test123456',
+      name: 'Test User',
+    );
+    debugPrint('✅ Test user created in Firebase Auth');
+  } catch (e) {
+    debugPrint('⚠️ Could not create test user: $e');
+  }
 
   runApp(
     MultiProvider(

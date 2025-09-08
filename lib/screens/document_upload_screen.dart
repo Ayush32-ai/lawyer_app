@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:provider/provider.dart';
+import '../services/firebase_auth_service.dart';
+import '../services/document_service.dart';
 import 'thank_you_screen.dart';
 
 class DocumentUploadScreen extends StatefulWidget {
@@ -18,6 +21,7 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
   ];
 
   bool isUploading = false;
+  List<Map<String, dynamic>> uploadedDocuments = [];
 
   Future<void> _pickFile(int index) async {
     try {
@@ -81,17 +85,203 @@ class _DocumentUploadScreenState extends State<DocumentUploadScreen> {
       isUploading = true;
     });
 
-    // Simulate upload delay
-    await Future.delayed(const Duration(seconds: 3));
+    try {
+      final firebaseAuthService = Provider.of<FirebaseAuthService>(
+        context,
+        listen: false,
+      );
+      final currentUser = firebaseAuthService.currentUser;
 
-    setState(() {
-      isUploading = false;
-    });
+      if (currentUser == null) {
+        throw 'User not authenticated';
+      }
 
-    // Navigate to thank you screen
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const ThankYouScreen()),
+      // Check Firebase configuration before proceeding
+      debugPrint('🔍 Checking Firebase configuration...');
+      final configCheck = await DocumentService.checkFirebaseConfiguration();
+
+      // Check project status first
+      if (configCheck['project']?['status'] == 'error') {
+        throw 'Firebase project issue: ${configCheck['project']['message']}';
+      }
+
+      if (configCheck['storageConfig']?['status'] == 'error') {
+        throw '''
+Storage bucket not configured: ${configCheck['storageConfig']['message']}
+
+To fix this:
+1. Go to Firebase Console (https://console.firebase.google.com/)
+2. Select your project: ${configCheck['project']?['projectId'] ?? 'Unknown'}
+3. Click "Storage" in the left sidebar
+4. Click "Get started" to enable Storage
+5. Choose a location for your storage bucket
+6. Set up security rules (start with test mode)
+
+After enabling Storage, restart your app and try again.
+        ''';
+      }
+
+      if (configCheck['storage']?['status'] == 'error') {
+        throw 'Firebase Storage is not accessible: ${configCheck['storage']['message']}';
+      }
+
+      if (configCheck['firestore']?['status'] == 'error') {
+        throw 'Firestore is not accessible: ${configCheck['firestore']['message']}';
+      }
+
+      // Show warnings but don't block uploads
+      if (configCheck['firestore']?['status'] == 'warning') {
+        debugPrint(
+          '⚠️ Firestore warning: ${configCheck['firestore']['message']}',
+        );
+        // Don't throw - just log the warning
+      }
+
+      debugPrint('✅ Firebase configuration check passed');
+      debugPrint('📊 Project ID: ${configCheck['project']?['projectId']}');
+      debugPrint(
+        '📊 Storage Bucket: ${configCheck['project']?['storageBucket']}',
+      );
+
+      uploadedDocuments.clear();
+
+      // Upload each document
+      for (int i = 0; i < documentSlots.length; i++) {
+        final slot = documentSlots[i];
+        if (slot.filePath != null) {
+          try {
+            debugPrint(
+              '📤 Uploading document ${i + 1}/${documentSlots.length}: ${slot.fileName}',
+            );
+
+            final result = await DocumentService.uploadDocument(
+              filePath: slot.filePath!,
+              fileName: slot.fileName!,
+              documentType: slot.title,
+              description: slot.descriptionController.text.trim(),
+              userId: currentUser.uid,
+              additionalData: {'slotIndex': i, 'originalTitle': slot.title},
+            );
+
+            uploadedDocuments.add(result);
+            debugPrint(
+              '✅ Document uploaded successfully: ${result['fileName']}',
+            );
+          } catch (e) {
+            debugPrint('❌ Error uploading document ${slot.fileName}: $e');
+            _showErrorSnackBar('Failed to upload ${slot.fileName}: $e');
+            setState(() {
+              isUploading = false;
+            });
+            return;
+          }
+        }
+      }
+
+      debugPrint(
+        '🎉 All documents uploaded successfully! Total: ${uploadedDocuments.length}',
+      );
+
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${uploadedDocuments.length} documents uploaded successfully!',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+
+      // Navigate to thank you screen
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const ThankYouScreen()),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Error during document submission: $e');
+      if (mounted) {
+        _showErrorSnackBar('Upload failed: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          isUploading = false;
+        });
+      }
+    }
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Help',
+          textColor: Colors.white,
+          onPressed: () => _showFirebaseHelpDialog(),
+        ),
+      ),
+    );
+  }
+
+  void _showFirebaseHelpDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.help_outline, color: Colors.blue[600]),
+            const SizedBox(width: 8),
+            Text(
+              'Firebase Storage Issue',
+              style: GoogleFonts.roboto(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'The document upload failed due to a Firebase Storage configuration issue.',
+              style: GoogleFonts.roboto(),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Common causes and solutions:',
+              style: GoogleFonts.roboto(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text('• Firebase Storage is not enabled in your project'),
+            Text('• Storage rules are too restrictive'),
+            Text('• Project configuration is missing'),
+            const SizedBox(height: 16),
+            Text(
+              'Please check your Firebase Console and ensure:',
+              style: GoogleFonts.roboto(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text('1. Storage is enabled in your project'),
+            Text('2. Storage rules allow authenticated uploads'),
+            Text('3. Your app configuration is correct'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'OK',
+              style: GoogleFonts.roboto(color: const Color(0xFF2196F3)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -403,4 +593,3 @@ class DocumentSlot {
     descriptionController.dispose();
   }
 }
-

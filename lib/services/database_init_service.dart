@@ -271,15 +271,45 @@ class DatabaseInitService {
       final bookingsCount =
           (await _firestore.collection('bookings').get()).docs.length;
 
-      return {
-        'lawyers': lawyersCount,
-        'users': usersCount,
-        'bookings': bookingsCount,
-      };
+      return {'lawyers': lawyersCount, 'users': 0, 'bookings': bookingsCount};
     } catch (e) {
       debugPrint('❌ Error getting database stats: $e');
       return {'lawyers': 0, 'users': 0, 'bookings': 0};
     }
   }
-}
 
+  /// Create a test user account for development
+  static Future<void> createTestUser() async {
+    try {
+      debugPrint('👤 Creating test user account...');
+
+      // Check if test user already exists
+      final testUserQuery = await _firestore
+          .collection('users')
+          .where('email', isEqualTo: 'test@lawyerapp.com')
+          .get();
+
+      if (testUserQuery.docs.isNotEmpty) {
+        debugPrint('✅ Test user already exists');
+        return;
+      }
+
+      // Create test user document
+      await _firestore.collection('users').add({
+        'email': 'test@lawyerapp.com',
+        'name': 'Test User',
+        'userType': 'client',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'phoneNumber': '+1 (555) 000-0000',
+        'address': '123 Test Street, Test City, TC 12345',
+      });
+
+      debugPrint('✅ Test user created successfully');
+      debugPrint('📧 Email: test@lawyerapp.com');
+      debugPrint('🔑 Password: test123456');
+    } catch (e) {
+      debugPrint('❌ Error creating test user: $e');
+    }
+  }
+}

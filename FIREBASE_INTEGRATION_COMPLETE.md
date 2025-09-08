@@ -200,3 +200,7 @@ The app is now production-ready with a robust backend infrastructure! 🚀
 - Add real-time chat between clients and lawyers
 - Implement Firebase Functions for server-side logic
 
+
+
+
+

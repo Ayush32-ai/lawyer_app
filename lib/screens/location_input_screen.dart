@@ -3,6 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:provider/provider.dart';
+import '../services/firebase_auth_service.dart';
+import '../services/location_service.dart';
 import 'dashboard_screen.dart';
 
 class LocationInputScreen extends StatefulWidget {
@@ -16,6 +19,43 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
   final TextEditingController _addressController = TextEditingController();
   bool _isLoading = false;
   String? _currentLocation;
+  Position? _currentPosition;
+  String? _savedLocation;
+  bool _hasExistingLocation = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkExistingLocation();
+  }
+
+  Future<void> _checkExistingLocation() async {
+    try {
+      final firebaseAuthService = Provider.of<FirebaseAuthService>(
+        context,
+        listen: false,
+      );
+
+      final currentUser = firebaseAuthService.currentUser;
+      if (currentUser != null) {
+        final savedLocation = await LocationService.getUserLocation(
+          currentUser.uid,
+        );
+        if (savedLocation != null && savedLocation['address'] != null) {
+          setState(() {
+            _savedLocation = savedLocation['address'];
+            _hasExistingLocation = true;
+          });
+          debugPrint('📍 Found existing location: $_savedLocation');
+        } else {
+          debugPrint('📍 No existing location found');
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error checking existing location: $e');
+      // Don't show error to user as this is background operation
+    }
+  }
 
   Future<void> _getCurrentLocation() async {
     setState(() {
@@ -65,6 +105,8 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
         timeLimit: const Duration(seconds: 15),
       );
 
+      _currentPosition = position;
+
       // Convert coordinates to address
       try {
         List<Placemark> placemarks = await placemarkFromCoordinates(
@@ -82,21 +124,45 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
                 : '${place.locality ?? place.administrativeArea ?? "Unknown Location"}';
             _isLoading = false;
           });
+
+          // Save location to Firebase
+          await _saveLocationToFirebase(
+            address,
+            position.latitude,
+            position.longitude,
+          );
         } else {
           // Fallback to coordinates if no address found
+          final coordinateAddress =
+              'Location: ${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}';
           setState(() {
-            _currentLocation =
-                'Location: ${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}';
+            _currentLocation = coordinateAddress;
             _isLoading = false;
           });
+
+          // Save location to Firebase
+          await _saveLocationToFirebase(
+            coordinateAddress,
+            position.latitude,
+            position.longitude,
+          );
         }
       } catch (geocodingError) {
         // Fallback to coordinates if geocoding fails
+        final coordinateAddress =
+            'Location: ${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}';
         setState(() {
-          _currentLocation =
-              'Location: ${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}';
+          _currentLocation = coordinateAddress;
           _isLoading = false;
         });
+
+        // Save location to Firebase
+        await _saveLocationToFirebase(
+          coordinateAddress,
+          position.latitude,
+          position.longitude,
+        );
+
         _showErrorSnackBar(
           'Could not get address, but location detected successfully!',
         );
@@ -105,7 +171,13 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
       // Auto-navigate to dashboard after successful location detection
       Future.delayed(const Duration(seconds: 1), () {
         if (mounted && _currentLocation != null) {
-          _navigateToDashboard();
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) =>
+                  DashboardScreen(location: _currentLocation!),
+            ),
+          );
         }
       });
     } catch (e) {
@@ -125,6 +197,94 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _saveLocationToFirebase(
+    String address,
+    double latitude,
+    double longitude,
+  ) async {
+    try {
+      debugPrint('📍 Saving location to Firebase: $address');
+
+      if (_hasExistingLocation) {
+        // User is updating their location
+        await LocationService.updateUserLocation(
+          address: address,
+          latitude: latitude,
+          longitude: longitude,
+          additionalData: {
+            'source': 'gps',
+            'accuracy': 'high',
+            'method': 'automatic',
+            'isUpdate': true,
+          },
+        );
+      } else {
+        // User is setting location for the first time
+        await LocationService.saveLocationWithCoordinates(
+          latitude: latitude,
+          longitude: longitude,
+          additionalData: {
+            'source': 'gps',
+            'accuracy': 'high',
+            'method': 'automatic',
+          },
+        );
+      }
+
+      debugPrint('✅ Location saved to Firebase successfully');
+
+      // Show success message
+      if (_hasExistingLocation) {
+        _showSuccessSnackBar('Location updated successfully!');
+      } else {
+        _showSuccessSnackBar('Location saved successfully!');
+      }
+    } catch (e) {
+      debugPrint('❌ Error saving location to Firebase: $e');
+      // Don't show error to user as this is background operation
+    }
+  }
+
+  Future<void> _saveManualLocationToFirebase() async {
+    if (_addressController.text.trim().isEmpty) return;
+
+    try {
+      debugPrint(
+        '📍 Saving manual location to Firebase: ${_addressController.text.trim()}',
+      );
+
+      if (_hasExistingLocation) {
+        // User is updating their location
+        await LocationService.updateUserLocation(
+          address: _addressController.text.trim(),
+          additionalData: {
+            'source': 'manual',
+            'method': 'user_input',
+            'isUpdate': true,
+          },
+        );
+      } else {
+        // User is setting location for the first time
+        await LocationService.saveUserLocation(
+          address: _addressController.text.trim(),
+          additionalData: {'source': 'manual', 'method': 'user_input'},
+        );
+      }
+
+      debugPrint('✅ Manual location saved to Firebase successfully');
+
+      // Show success message
+      if (_hasExistingLocation) {
+        _showSuccessSnackBar('Location updated successfully!');
+      } else {
+        _showSuccessSnackBar('Location saved successfully!');
+      }
+    } catch (e) {
+      debugPrint('❌ Error saving manual location to Firebase: $e');
+      // Don't show error to user as this is background operation
     }
   }
 
@@ -252,13 +412,12 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
     );
   }
 
-  void _navigateToDashboard() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => DashboardScreen(
-          location: _currentLocation ?? _addressController.text,
-        ),
+  void _showSuccessSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -269,7 +428,7 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: Text(
-          'Where are you?',
+          _hasExistingLocation ? 'Change Your Location' : 'Where are you?',
           style: GoogleFonts.roboto(
             fontWeight: FontWeight.w600,
             color: Colors.white,
@@ -286,6 +445,119 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 32),
+
+              // Existing Location Section (if user has saved location)
+              if (_hasExistingLocation && _savedLocation != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.green[50],
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            size: 32,
+                            color: Colors.green[600],
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'You have a saved location',
+                                  style: GoogleFonts.roboto(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.green[800],
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _savedLocation!,
+                                  style: GoogleFonts.roboto(
+                                    fontSize: 14,
+                                    color: Colors.green[700],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SizedBox(
+                              height: 48,
+                              child: ElevatedButton(
+                                onPressed: () {
+                                  // Use existing location and go to dashboard
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => DashboardScreen(
+                                        location: _savedLocation!,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green[600],
+                                  foregroundColor: Colors.white,
+                                ),
+                                child: Text(
+                                  'Use Saved Location',
+                                  style: GoogleFonts.roboto(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: SizedBox(
+                              height: 48,
+                              child: OutlinedButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _hasExistingLocation = false;
+                                  });
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.green[600],
+                                  side: BorderSide(color: Colors.green[600]!),
+                                ),
+                                child: Text(
+                                  'Change Location',
+                                  style: GoogleFonts.roboto(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 32),
+              ],
 
               // Current Location Option
               Container(
@@ -508,10 +780,24 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
                     if (_addressController.text.isNotEmpty ||
                         _currentLocation != null) {
-                      _navigateToDashboard();
+                      // Save manual location if entered
+                      if (_addressController.text.isNotEmpty) {
+                        await _saveManualLocationToFirebase();
+                      }
+
+                      // Navigate to dashboard with new location
+                      final newLocation =
+                          _currentLocation ?? _addressController.text;
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              DashboardScreen(location: newLocation),
+                        ),
+                      );
                     } else {
                       _showErrorSnackBar(
                         'Please enter an address or use current location',
@@ -519,7 +805,7 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
                     }
                   },
                   child: Text(
-                    'Continue',
+                    _hasExistingLocation ? 'Update Location' : 'Continue',
                     style: GoogleFonts.roboto(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,

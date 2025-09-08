@@ -10,6 +10,7 @@ import 'notification_screen.dart';
 import 'profile_screen.dart';
 import 'recent_saved_screen.dart';
 import 'debug_database_screen.dart';
+import 'location_input_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   final String location;
@@ -205,12 +206,26 @@ class DashboardScreen extends StatelessWidget {
                               fontWeight: FontWeight.w600,
                             ),
                           ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Tap Change to update your location',
+                            style: GoogleFonts.roboto(
+                              fontSize: 11,
+                              color: Colors.blue[600],
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
                         ],
                       ),
                     ),
                     TextButton(
                       onPressed: () {
-                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const LocationInputScreen(),
+                          ),
+                        );
                       },
                       child: Text(
                         'Change',
