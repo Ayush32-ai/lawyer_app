@@ -100,12 +100,23 @@ class DocumentService {
     try {
       debugPrint('📄 Starting document upload: $fileName');
 
+      // Ensure user is authenticated and get fresh token
       final currentUser = _auth.currentUser;
-      final uid = userId ?? currentUser?.uid;
-
-      if (uid == null) {
-        throw 'User not authenticated';
+      if (currentUser == null) {
+        throw 'User not authenticated. Please log in again.';
       }
+
+      // Force refresh the ID token to ensure it's valid
+      try {
+        await currentUser.getIdToken(true); // Force refresh
+        debugPrint('✅ Authentication token refreshed successfully');
+      } catch (e) {
+        debugPrint('❌ Failed to refresh authentication token: $e');
+        throw 'Authentication token expired. Please log in again.';
+      }
+
+      final uid = userId ?? currentUser.uid;
+      debugPrint('🔐 Using authenticated user: $uid');
 
       // Validate Firebase Storage is available
       try {
@@ -164,7 +175,21 @@ class DocumentService {
       debugPrint('📤 Uploading to Firebase Storage: $uniqueFileName');
       debugPrint('📁 Storage path: ${storageRef.fullPath}');
 
-      // Upload to Firebase Storage with proper error handling
+      // Get fresh authentication token for storage operations
+      String idToken;
+      try {
+        final token = await currentUser.getIdToken();
+        if (token == null) {
+          throw 'Failed to get authentication token';
+        }
+        idToken = token;
+        debugPrint('✅ Got authentication token for storage operations');
+      } catch (e) {
+        debugPrint('❌ Failed to get authentication token: $e');
+        throw 'Failed to get authentication token. Please log in again.';
+      }
+
+      // Upload to Firebase Storage with proper error handling and auth token
       final uploadTask = storageRef.putFile(
         file,
         SettableMetadata(
@@ -174,6 +199,7 @@ class DocumentService {
             'uploadedBy': uid,
             'documentType': documentType,
             'uploadedAt': DateTime.now().toIso8601String(),
+            'authToken': idToken, // Include auth token in metadata
           },
         ),
       );

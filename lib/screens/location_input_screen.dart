@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../services/firebase_auth_service.dart';
 import '../services/location_service.dart';
 import 'dashboard_screen.dart';
+import 'lawyer_dashboard_screen.dart';
 
 class LocationInputScreen extends StatefulWidget {
   const LocationInputScreen({super.key});
@@ -19,7 +20,6 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
   final TextEditingController _addressController = TextEditingController();
   bool _isLoading = false;
   String? _currentLocation;
-  Position? _currentPosition;
   String? _savedLocation;
   bool _hasExistingLocation = false;
 
@@ -105,8 +105,6 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
         timeLimit: const Duration(seconds: 15),
       );
 
-      _currentPosition = position;
-
       // Convert coordinates to address
       try {
         List<Placemark> placemarks = await placemarkFromCoordinates(
@@ -171,13 +169,7 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
       // Auto-navigate to dashboard after successful location detection
       Future.delayed(const Duration(seconds: 1), () {
         if (mounted && _currentLocation != null) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) =>
-                  DashboardScreen(location: _currentLocation!),
-            ),
-          );
+          _navigateToDashboard(_currentLocation!);
         }
       });
     } catch (e) {
@@ -422,6 +414,65 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
     );
   }
 
+  // Helper method to navigate to appropriate dashboard based on user type
+  Future<void> _navigateToDashboard(String location) async {
+    try {
+      final firebaseAuthService = Provider.of<FirebaseAuthService>(
+        context,
+        listen: false,
+      );
+
+      final currentUser = firebaseAuthService.currentUser;
+      if (currentUser != null) {
+        // Get user profile to check user type
+        final userProfile = await firebaseAuthService.getUserProfile(
+          currentUser.uid,
+        );
+
+        final userType = userProfile?['userType'] ?? 'client';
+        debugPrint('🧭 Navigating to dashboard...');
+        debugPrint('📍 Location: $location');
+        debugPrint('👤 User type for routing: $userType');
+
+        if (userType == 'lawyer') {
+          debugPrint('✅ Routing to LawyerDashboardScreen');
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LawyerDashboardScreen(location: location),
+            ),
+          );
+        } else {
+          debugPrint('✅ Routing to DashboardScreen (client)');
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => DashboardScreen(location: location),
+            ),
+          );
+        }
+      } else {
+        // Fallback to client dashboard if no user found
+        debugPrint('⚠️ No current user found, defaulting to client dashboard');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DashboardScreen(location: location),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Error getting user type: $e');
+      // Fallback to client dashboard on error
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DashboardScreen(location: location),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -506,14 +557,7 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
                               child: ElevatedButton(
                                 onPressed: () {
                                   // Use existing location and go to dashboard
-                                  Navigator.pushReplacement(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => DashboardScreen(
-                                        location: _savedLocation!,
-                                      ),
-                                    ),
-                                  );
+                                  _navigateToDashboard(_savedLocation!);
                                 },
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.green[600],
@@ -791,13 +835,7 @@ class _LocationInputScreenState extends State<LocationInputScreen> {
                       // Navigate to dashboard with new location
                       final newLocation =
                           _currentLocation ?? _addressController.text;
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              DashboardScreen(location: newLocation),
-                        ),
-                      );
+                      _navigateToDashboard(newLocation);
                     } else {
                       _showErrorSnackBar(
                         'Please enter an address or use current location',

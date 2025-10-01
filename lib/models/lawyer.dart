@@ -13,6 +13,9 @@ class Lawyer {
   final String phone;
   final String email;
   final List<String> specializations;
+  final String address;
+  final double latitude;
+  final double longitude;
 
   Lawyer({
     required this.id,
@@ -29,6 +32,9 @@ class Lawyer {
     required this.phone,
     required this.email,
     required this.specializations,
+    required this.address,
+    required this.latitude,
+    required this.longitude,
   });
 
   String get availabilityStatus => isAvailable ? 'Available Now' : 'Busy';
@@ -39,17 +45,27 @@ class Lawyer {
       id: id,
       name: data['name'] ?? '',
       specialty: data['specialty'] ?? '',
-      distance: (data['distance'] ?? 0).toDouble(),
+      distance: (data['distance'] ?? 2.5)
+          .toDouble(), // Default distance if not set
       isAvailable: data['isAvailable'] ?? true,
-      experienceYears: data['experienceYears'] ?? 0,
+      experienceYears:
+          data['yearsOfExperience'] ?? data['experienceYears'] ?? 0,
       bio: data['bio'] ?? '',
-      consultationFee: (data['consultationFee'] ?? 0).toDouble(),
+      consultationFee: data['ratePerCase'] != null
+          ? (data['ratePerCase'] as num).toDouble()
+          : 0.0, // Get rate per case from Firestore
       profileImage: data['profileImage'] ?? '',
-      rating: (data['rating'] ?? 0).toDouble(),
+      rating: (data['rating'] ?? 4.5)
+          .toDouble(), // Default rating for new lawyers
       reviewCount: data['reviewCount'] ?? 0,
       phone: data['phone'] ?? '',
+      address: data['address'] ?? '',
+      latitude: (data['latitude'] ?? 0.0).toDouble(),
+      longitude: (data['longitude'] ?? 0.0).toDouble(),
       email: data['email'] ?? '',
-      specializations: List<String>.from(data['specializations'] ?? []),
+      specializations: List<String>.from(
+        data['specializations'] ?? [data['specialty'] ?? ''],
+      ),
     );
   }
 
@@ -82,16 +98,19 @@ class Lawyer {
         id: '1',
         name: 'Dr. Sarah Johnson',
         specialty: 'Criminal Law',
-        distance: 0.8,
+        distance: 0.0, // Will be calculated
+        address: 'Crystal Court, Civil Lines, Jaipur',
+        latitude: 26.9124,
+        longitude: 75.7873,
         isAvailable: true,
         experienceYears: 12,
         bio:
             'Experienced criminal defense attorney with a proven track record of successful cases. Specializes in white-collar crimes and federal cases.',
-        consultationFee: 250.0,
+        consultationFee: 2500.0,
         profileImage: '',
         rating: 4.8,
         reviewCount: 156,
-        phone: '+1 (555) 123-4567',
+        phone: '+91 9876543210',
         email: 'sarah.johnson@lawfirm.com',
         specializations: [
           'Criminal Defense',
@@ -101,19 +120,22 @@ class Lawyer {
       ),
       Lawyer(
         id: '2',
-        name: 'Michael Chen',
+        name: 'Amit Sharma',
         specialty: 'Family Law',
-        distance: 1.2,
-        isAvailable: false,
+        distance: 0.0, // Will be calculated
+        address: 'Vaishali Nagar, Jaipur',
+        latitude: 26.9115,
+        longitude: 75.7439,
+        isAvailable: true,
         experienceYears: 8,
         bio:
             'Compassionate family law attorney helping families navigate divorce, custody, and adoption proceedings with care and expertise.',
-        consultationFee: 200.0,
+        consultationFee: 2000.0,
         profileImage: '',
         rating: 4.7,
         reviewCount: 98,
-        phone: '+1 (555) 234-5678',
-        email: 'michael.chen@familylaw.com',
+        phone: '+91 9876543211',
+        email: 'amit.sharma@familylaw.com',
         specializations: [
           'Divorce',
           'Child Custody',
@@ -123,19 +145,22 @@ class Lawyer {
       ),
       Lawyer(
         id: '3',
-        name: 'Emily Rodriguez',
+        name: 'Priya Verma',
         specialty: 'Corporate Law',
-        distance: 2.1,
+        distance: 0.0, // Will be calculated
+        address: 'Malviya Nagar, Jaipur',
+        latitude: 26.8535,
+        longitude: 75.8123,
         isAvailable: true,
         experienceYears: 15,
         bio:
-            'Corporate law specialist with extensive experience in mergers, acquisitions, and business litigation. Trusted advisor to Fortune 500 companies.',
-        consultationFee: 350.0,
+            'Corporate law specialist with extensive experience in mergers, acquisitions, and business litigation. Trusted advisor to major Indian companies.',
+        consultationFee: 3500.0,
         profileImage: '',
         rating: 4.9,
         reviewCount: 203,
-        phone: '+1 (555) 345-6789',
-        email: 'emily.rodriguez@corplaw.com',
+        phone: '+91 9876543212',
+        email: 'priya.verma@corplaw.com',
         specializations: [
           'Corporate Law',
           'M&A',
@@ -145,14 +170,17 @@ class Lawyer {
       ),
       Lawyer(
         id: '4',
-        name: 'David Thompson',
+        name: 'Rajesh Kumar',
         specialty: 'Personal Injury',
-        distance: 0.5,
+        distance: 0.0, // Will be calculated
+        address: 'C-Scheme, Jaipur',
+        latitude: 26.9057,
+        longitude: 75.7892,
         isAvailable: true,
         experienceYears: 10,
         bio:
             'Personal injury attorney fighting for the rights of accident victims. No fee unless we win your case.',
-        consultationFee: 0.0,
+        consultationFee: 1500.0,
         profileImage: '',
         rating: 4.6,
         reviewCount: 142,
@@ -167,24 +195,27 @@ class Lawyer {
       ),
       Lawyer(
         id: '5',
-        name: 'Jennifer Williams',
+        name: 'Meera Agarwal',
         specialty: 'Immigration Law',
-        distance: 1.8,
-        isAvailable: false,
+        distance: 0.0, // Will be calculated
+        address: 'Raja Park, Jaipur',
+        latitude: 26.8998,
+        longitude: 75.8227,
+        isAvailable: true,
         experienceYears: 7,
         bio:
-            'Immigration attorney helping individuals and families achieve their American dream through skilled legal representation.',
-        consultationFee: 180.0,
+            'Immigration law expert helping individuals and families with visa applications, foreign education, and work permits.',
+        consultationFee: 1800.0,
         profileImage: '',
         rating: 4.8,
         reviewCount: 89,
-        phone: '+1 (555) 567-8901',
-        email: 'jennifer.williams@immigrationlaw.com',
+        phone: '+91 9876543213',
+        email: 'meera.agarwal@immigrationlaw.com',
         specializations: [
-          'Immigration',
-          'Visa Applications',
-          'Green Cards',
-          'Citizenship',
+          'Immigration Law',
+          'Student Visas',
+          'Work Permits',
+          'Foreign Education',
         ],
       ),
     ];

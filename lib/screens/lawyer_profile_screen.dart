@@ -4,8 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/favorites_service.dart';
 import '../models/lawyer.dart';
-import 'booking_confirmation_screen.dart';
+import 'book_appointment_screen.dart';
 import 'document_upload_screen.dart';
+import 'booking_confirmation_screen.dart';
 
 class LawyerProfileScreen extends StatelessWidget {
   final Lawyer lawyer;
@@ -30,6 +31,56 @@ class LawyerProfileScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
+      bottomNavigationBar: Container(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          bottom: MediaQuery.of(context).padding.bottom + 16,
+          top: 16,
+        ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, -5),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => _makePhoneCall(lawyer.phone),
+                icon: const Icon(Icons.phone),
+                label: const Text('Call'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => BookAppointmentScreen(lawyer: lawyer),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.calendar_today),
+                label: const Text('Book Appointment'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
       body: CustomScrollView(
         slivers: [
           // Custom App Bar with profile image

@@ -47,13 +47,23 @@ class LocationService {
           .doc('current')
           .set(locationData);
 
-      // Also update the main user document with current location
-      await _firestore.collection('users').doc(uid).update({
+      final updateData = {
         'currentLocation': address,
+        'address': address,
         'latitude': latitude,
         'longitude': longitude,
         'locationUpdatedAt': FieldValue.serverTimestamp(),
-      });
+      };
+
+      // Update main user document
+      await _firestore.collection('users').doc(uid).update(updateData);
+
+      // Also check and update lawyer document if exists
+      final lawyerDoc = await _firestore.collection('lawyers').doc(uid).get();
+      if (lawyerDoc.exists) {
+        debugPrint('📍 Found lawyer document, updating location data...');
+        await _firestore.collection('lawyers').doc(uid).update(updateData);
+      }
 
       debugPrint('✅ User location saved successfully');
     } catch (e) {
@@ -194,40 +204,60 @@ class LocationService {
   static Future<void> saveLocationWithCoordinates({
     required double latitude,
     required double longitude,
-    String? userId,
     Map<String, dynamic>? additionalData,
   }) async {
     try {
-      debugPrint('📍 Saving location with coordinates: $latitude, $longitude');
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) {
+        throw 'User not authenticated';
+      }
 
-      // Reverse geocoding to get address
+      debugPrint('📍 Saving coordinates to Firebase: $latitude, $longitude');
+
       List<Placemark> placemarks = await placemarkFromCoordinates(
         latitude,
         longitude,
       );
 
-      if (placemarks.isNotEmpty) {
-        Placemark place = placemarks[0];
-        String address = _buildAddressString(place);
-
-        await saveUserLocation(
-          address: address,
-          latitude: latitude,
-          longitude: longitude,
-          userId: userId,
-          additionalData: additionalData,
-        );
-      } else {
-        // Fallback to coordinates if no address found
-        await saveUserLocation(
-          address:
-              'Location: ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}',
-          latitude: latitude,
-          longitude: longitude,
-          userId: userId,
-          additionalData: additionalData,
-        );
+      if (placemarks.isEmpty) {
+        throw 'Could not determine address from coordinates';
       }
+
+      final placemark = placemarks.first;
+      final address = _buildAddressString(placemark);
+
+      debugPrint('📍 Resolved address: $address');
+
+      // Check if user is a lawyer
+      final lawyerDoc = await _firestore
+          .collection('lawyers')
+          .doc(currentUser.uid)
+          .get();
+
+      if (lawyerDoc.exists) {
+        debugPrint('📍 Saving location for lawyer...');
+        // Update lawyer document directly with location data
+        await _firestore.collection('lawyers').doc(currentUser.uid).update({
+          'address': address,
+          'latitude': latitude,
+          'longitude': longitude,
+          'locationUpdatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // Save to user's documents as well
+      await saveUserLocation(
+        address: address,
+        latitude: latitude,
+        longitude: longitude,
+        additionalData: {
+          ...?additionalData,
+          'geocoded': true,
+          'accuracy': 'high',
+        },
+      );
+
+      debugPrint('✅ Location with coordinates saved successfully');
     } catch (e) {
       debugPrint('❌ Error saving location with coordinates: $e');
       rethrow;

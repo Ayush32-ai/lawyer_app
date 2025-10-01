@@ -9,6 +9,7 @@ import 'signup_screen.dart';
 import 'debug_database_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'dashboard_screen.dart'; // Added import for DashboardScreen
+import 'lawyer_dashboard_screen.dart'; // Added import for LawyerDashboardScreen
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -59,26 +60,51 @@ class _LoginScreenState extends State<LoginScreen> {
             '✅ Login successful for user: ${userCredential.user!.email}',
           );
 
+          // Get user profile to check user type
+          final userProfile = await firebaseAuthService.getUserProfile(
+            userCredential.user!.uid,
+          );
+
+          debugPrint('📊 User profile data: $userProfile');
+          final userType = userProfile?['userType'] ?? 'client';
+          debugPrint('👤 Detected user type: $userType');
+
           // Check if user has saved location
           final hasSavedLocation = await _checkUserHasSavedLocation(
             userCredential.user!.uid,
           );
 
           if (hasSavedLocation) {
-            // User has saved location, get it and go to dashboard
+            // User has saved location, get it and go to appropriate dashboard
             final savedLocation = await LocationService.getUserLocation(
               userCredential.user!.uid,
             );
             final locationAddress =
                 savedLocation?['address'] ?? 'Unknown Location';
 
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) =>
-                    DashboardScreen(location: locationAddress),
-              ),
-            );
+            debugPrint('🧭 Navigating to dashboard...');
+            debugPrint('📍 Location: $locationAddress');
+            debugPrint('👤 User type for routing: $userType');
+
+            if (userType == 'lawyer') {
+              debugPrint('✅ Routing to LawyerDashboardScreen');
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) =>
+                      LawyerDashboardScreen(location: locationAddress),
+                ),
+              );
+            } else {
+              debugPrint('✅ Routing to DashboardScreen (client)');
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) =>
+                      DashboardScreen(location: locationAddress),
+                ),
+              );
+            }
           } else {
             // No saved location, go to location input screen
             Navigator.pushReplacement(
@@ -126,44 +152,6 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Text(
               'OK',
               style: GoogleFonts.roboto(color: const Color(0xFF2196F3)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showSignUpPrompt() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Account Not Found',
-          style: GoogleFonts.roboto(fontWeight: FontWeight.bold),
-        ),
-        content: Text(
-          'No account found with this email address. Would you like to create a new account?',
-          style: GoogleFonts.roboto(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.roboto(color: Colors.grey[600]),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const SignUpScreen()),
-              );
-            },
-            child: Text(
-              'Sign Up',
-              style: GoogleFonts.roboto(color: Colors.white),
             ),
           ),
         ],

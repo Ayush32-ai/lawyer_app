@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../models/lawyer.dart';
+import '../models/appointment.dart';
+import '../services/firebase_auth_service.dart';
+import '../services/appointment_service.dart';
 import 'document_upload_screen.dart';
 import 'thank_you_screen.dart';
 
@@ -60,20 +64,65 @@ class _BookingConfirmationScreenState extends State<BookingConfirmationScreen> {
     }
   }
 
-  void _confirmBooking() {
+  void _confirmBooking() async {
+    final authService = Provider.of<FirebaseAuthService>(context, listen: false);
+
+    if (authService.currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please login to book an appointment')),
+      );
+      return;
+    }
+
     setState(() {
       isConfirmed = true;
     });
 
-    // Simulate booking confirmation delay
-    Future.delayed(const Duration(seconds: 2), () {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const ThankYouScreen(isBooking: true),
+    try {
+      // Create appointment
+      final appointmentId = await Provider.of<AppointmentService>(context, listen: false)
+          .createAppointment(
+        Appointment(
+          id: '',  // Will be set by Firestore
+          lawyerId: widget.lawyer.id,
+          clientId: authService.currentUser!.uid,
+          dateTime: DateTime(
+            selectedDate.year,
+            selectedDate.month,
+            selectedDate.day,
+            selectedTime.hour,
+            selectedTime.minute,
+          ),
+          status: AppointmentStatus.pending,
+          description: '$selectedType Consultation',
+          rate: widget.lawyer.consultationFee,
+          lawyerName: widget.lawyer.name,
+          clientName: authService.userProfile?['name'] ?? 'Client',
+          clientPhone: authService.userProfile?['phoneNumber'] ?? '',
         ),
       );
-    });
+
+      debugPrint('✅ Appointment created with ID: $appointmentId');
+
+      // Navigate after delay
+      if (mounted) {
+        await Future.delayed(const Duration(seconds: 2));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const ThankYouScreen(isBooking: true),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          isConfirmed = false;
+        });
+        // Log the error but do not show an error SnackBar to the user
+        debugPrint('❌ Error booking appointment: $e');
+      }
+    }
   }
 
   String _formatDate(DateTime date) {
@@ -567,6 +616,7 @@ class _BookingConfirmationScreenState extends State<BookingConfirmationScreen> {
     );
   }
 }
+
 
 
 

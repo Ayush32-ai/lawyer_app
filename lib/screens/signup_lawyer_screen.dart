@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../services/firebase_auth_service.dart';
+import '../services/location_service.dart';
+import '../services/lawyer_service.dart';
 import '../models/user_type.dart';
 import 'location_input_screen.dart';
+import 'lawyer_dashboard_screen.dart';
 
 class SignUpLawyerScreen extends StatefulWidget {
   const SignUpLawyerScreen({super.key});
@@ -22,11 +25,19 @@ class _SignUpLawyerScreenState extends State<SignUpLawyerScreen> {
   final _specialtyController = TextEditingController();
   final _experienceController = TextEditingController();
   final _bioController = TextEditingController();
+  final _addressController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _rateController = TextEditingController();
+
+  double? _latitude;
+  double? _longitude;
+  String? _formattedAddress;
 
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _agreeToTerms = false;
+  bool _isLocationValid = false;
 
   String? _selectedSpecialty;
   final List<String> _specialties = [
@@ -53,6 +64,8 @@ class _SignUpLawyerScreenState extends State<SignUpLawyerScreen> {
     _specialtyController.dispose();
     _experienceController.dispose();
     _bioController.dispose();
+    _phoneController.dispose();
+    _rateController.dispose();
     super.dispose();
   }
 
@@ -83,8 +96,12 @@ class _SignUpLawyerScreenState extends State<SignUpLawyerScreen> {
                 'licenseNumber': _licenseController.text.trim(),
                 'specialty':
                     _selectedSpecialty ?? _specialtyController.text.trim(),
-                'yearsOfExperience': int.tryParse(_experienceController.text),
+                'yearsOfExperience':
+                    int.tryParse(_experienceController.text) ?? 0,
                 'bio': _bioController.text.trim(),
+                'phone': _phoneController.text.trim(),
+                'ratePerCase':
+                    double.tryParse(_rateController.text.trim()) ?? 0.0,
                 'isVerified': false, // Lawyers need verification
               },
             )
@@ -99,12 +116,58 @@ class _SignUpLawyerScreenState extends State<SignUpLawyerScreen> {
           debugPrint(
             '✅ Lawyer account created successfully: ${userCredential.user!.email}',
           );
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const LocationInputScreen(),
-            ),
+
+          // Create lawyer profile in lawyers collection
+          await LawyerService.createOrUpdateLawyerProfile(
+            uid: userCredential.user!.uid,
+            name: _nameController.text.trim(),
+            email: _emailController.text.trim(),
+            licenseNumber: _licenseController.text.trim(),
+            specialty: _selectedSpecialty ?? _specialtyController.text.trim(),
+            yearsOfExperience: int.tryParse(_experienceController.text) ?? 0,
+            bio: _bioController.text.trim(),
+            phone: _phoneController.text.trim(),
+            ratePerCase: double.tryParse(_rateController.text.trim()) ?? 0.0,
           );
+
+          // Wait a moment for the profile to be saved
+          await Future.delayed(const Duration(seconds: 2));
+
+          // Check if user has saved location
+          final hasSavedLocation = await _checkUserHasSavedLocation(
+            userCredential.user!.uid,
+          );
+
+          if (hasSavedLocation) {
+            // User has saved location, get it and go to lawyer dashboard
+            final savedLocation = await LocationService.getUserLocation(
+              userCredential.user!.uid,
+            );
+            final locationAddress =
+                savedLocation?['address'] ?? 'Unknown Location';
+
+            debugPrint('🧭 Navigating to LawyerDashboardScreen...');
+            debugPrint('📍 Location: $locationAddress');
+
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    LawyerDashboardScreen(location: locationAddress),
+              ),
+            );
+          } else {
+            // No saved location, go to location input screen
+            debugPrint(
+              '🧭 No saved location, navigating to LocationInputScreen...',
+            );
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const LocationInputScreen(),
+              ),
+            );
+          }
         } else {
           debugPrint(
             '❌ Failed to create lawyer account: userCredential is null',
@@ -150,6 +213,16 @@ class _SignUpLawyerScreenState extends State<SignUpLawyerScreen> {
         ],
       ),
     );
+  }
+
+  // Helper method to check if user has saved location
+  Future<bool> _checkUserHasSavedLocation(String userId) async {
+    try {
+      return await LocationService.hasUserLocation(userId);
+    } catch (e) {
+      debugPrint('❌ Error checking user location: $e');
+      return false;
+    }
   }
 
   @override
@@ -260,6 +333,45 @@ class _SignUpLawyerScreenState extends State<SignUpLawyerScreen> {
                     validator: (value) {
                       if (value == null || value.isEmpty) {
                         return 'Please enter your bar license number';
+                      }
+                      return null;
+                    },
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  _buildTextField(
+                    controller: _phoneController,
+                    label: 'Phone Number',
+                    icon: Icons.phone_outlined,
+                    keyboardType: TextInputType.phone,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter your phone number';
+                      }
+                      if (value.length < 10) {
+                        return 'Please enter a valid phone number';
+                      }
+                      return null;
+                    },
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  _buildTextField(
+                    controller: _rateController,
+                    label: 'Rate per Case (₹)',
+                    icon: Icons.currency_rupee_outlined,
+                    keyboardType: TextInputType.number,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter your rate per case';
+                      }
+                      if (double.tryParse(value) == null) {
+                        return 'Please enter a valid amount';
+                      }
+                      if (double.parse(value) <= 0) {
+                        return 'Rate must be greater than 0';
                       }
                       return null;
                     },

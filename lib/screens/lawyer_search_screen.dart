@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 import '../models/lawyer.dart';
 import 'lawyer_profile_screen.dart';
 
@@ -18,6 +21,7 @@ class _LawyerSearchScreenState extends State<LawyerSearchScreen> {
   String selectedSpecialty = 'All';
   String selectedAvailability = 'All';
   bool isMapView = false;
+  bool isLoading = true;
 
   final List<String> specialties = [
     'All',
@@ -26,15 +30,133 @@ class _LawyerSearchScreenState extends State<LawyerSearchScreen> {
     'Corporate Law',
     'Personal Injury',
     'Immigration Law',
+    'Real Estate Law',
+    'Tax Law',
+    'Employment Law',
+    'Intellectual Property',
   ];
 
   final List<String> availabilityOptions = ['All', 'Available Now', 'Busy'];
 
+  String _formatDistance(double distance) {
+    if (distance < 0) return 'Location N/A';
+    if (distance == 0) return 'Same location';
+    return '${distance.toString()} km away';
+  }
+
   @override
   void initState() {
     super.initState();
-    lawyers = Lawyer.getMockLawyers();
-    filteredLawyers = lawyers;
+    _loadLawyers();
+  }
+
+  Future<void> _loadLawyers() async {
+    if (!mounted) return;
+
+    setState(() => isLoading = true);
+
+    try {
+      debugPrint('🔄 Loading lawyers...');
+
+      // Get client's location coordinates
+      final locations = await locationFromAddress(widget.location);
+      if (locations.isEmpty) {
+        throw Exception('Could not get coordinates for ${widget.location}');
+      }
+
+      final clientLocation = locations.first;
+      debugPrint(
+        '📍 Client location: ${clientLocation.latitude}, ${clientLocation.longitude}',
+      );
+
+      // Get lawyers from Firestore
+      final lawyerDocs = await FirebaseFirestore.instance
+          .collection('lawyers')
+          .get();
+      debugPrint('📚 Found ${lawyerDocs.docs.length} lawyers in database');
+
+      // Process each lawyer
+      final lawyersWithDistance = <Lawyer>[];
+
+      for (final doc in lawyerDocs.docs) {
+        try {
+          final data = Map<String, dynamic>.from(doc.data());
+          debugPrint('\n📄 Raw lawyer data for ${doc.id}:');
+          debugPrint(data.toString());
+
+          // Check location data
+          debugPrint('🗺️ Lawyer ${doc.id} location data:');
+          debugPrint(
+            '   latitude: ${data['latitude']} (${data['latitude']?.runtimeType})',
+          );
+          debugPrint(
+            '   longitude: ${data['longitude']} (${data['longitude']?.runtimeType})',
+          );
+
+          // Check rate data
+          debugPrint('💰 Lawyer ${doc.id} rate data:');
+          debugPrint(
+            '   ratePerCase: ${data['ratePerCase']} (${data['ratePerCase']?.runtimeType})',
+          );
+
+          // Calculate distance if coordinates exist and are valid numbers
+          if (data['latitude'] != null &&
+              data['longitude'] != null &&
+              data['latitude'] is num &&
+              data['longitude'] is num) {
+            final lawyerLat = (data['latitude'] as num).toDouble();
+            final lawyerLng = (data['longitude'] as num).toDouble();
+
+            debugPrint('   Coordinates valid: $lawyerLat, $lawyerLng');
+
+            final distanceInMeters = Geolocator.distanceBetween(
+              clientLocation.latitude,
+              clientLocation.longitude,
+              lawyerLat,
+              lawyerLng,
+            );
+
+            // Convert to km with one decimal place, if distance is less than 10m show as 0km
+            final distance = distanceInMeters / 1000;
+            data['distance'] = distance < 0.01
+                ? 0.0
+                : double.parse(distance.toStringAsFixed(1));
+            debugPrint('   📏 Calculated distance: ${data['distance']} km');
+          } else {
+            debugPrint(
+              '⚠️ Lawyer ${doc.id} has invalid or missing coordinates',
+            );
+            data['distance'] = -1; // Special value to indicate missing location
+          }
+
+          // Create lawyer object with distance
+          final lawyer = Lawyer.fromFirestore(data, doc.id);
+          debugPrint('📏 ${lawyer.name}: ${_formatDistance(lawyer.distance)}');
+          lawyersWithDistance.add(lawyer);
+        } catch (e, stack) {
+          debugPrint('❌ Error processing lawyer ${doc.id}: $e');
+          debugPrint(stack.toString());
+        }
+      }
+
+      if (!mounted) return;
+
+      // Sort by distance and update state
+      setState(() {
+        lawyers = lawyersWithDistance
+          ..sort((a, b) => a.distance.compareTo(b.distance));
+        filteredLawyers = lawyers;
+        isLoading = false;
+      });
+
+      debugPrint('✅ Successfully loaded ${lawyers.length} lawyers');
+    } catch (e, stack) {
+      debugPrint('❌ Error loading lawyers: $e');
+      debugPrint(stack.toString());
+
+      if (!mounted) return;
+      setState(() => isLoading = false);
+    }
   }
 
   void _filterLawyers() {
@@ -266,13 +388,67 @@ class _LawyerSearchScreenState extends State<LawyerSearchScreen> {
   }
 
   Widget _buildListView() {
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: filteredLawyers.length,
-      itemBuilder: (context, index) {
-        final lawyer = filteredLawyers[index];
-        return _buildLawyerCard(lawyer);
-      },
+    if (isLoading) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Loading lawyers...'),
+          ],
+        ),
+      );
+    }
+
+    if (filteredLawyers.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              lawyers.isEmpty
+                  ? 'No lawyers found'
+                  : 'No lawyers match your filters',
+              style: GoogleFonts.roboto(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[600],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              lawyers.isEmpty
+                  ? 'Be the first lawyer to join our platform!'
+                  : 'Try adjusting your search criteria',
+              style: GoogleFonts.roboto(fontSize: 14, color: Colors.grey[500]),
+              textAlign: TextAlign.center,
+            ),
+            if (lawyers.isEmpty) ...[
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: _loadLawyers,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Refresh'),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadLawyers,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: filteredLawyers.length,
+        itemBuilder: (context, index) {
+          final lawyer = filteredLawyers[index];
+          return _buildLawyerCard(lawyer);
+        },
+      ),
     );
   }
 
@@ -417,7 +593,8 @@ class _LawyerSearchScreenState extends State<LawyerSearchScreen> {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          '${lawyer.distance} km away',
+                          _formatDistance(lawyer.distance) +
+                              ' • ${lawyer.address}',
                           style: GoogleFonts.roboto(
                             fontSize: 14,
                             color: Colors.grey[600],
@@ -434,7 +611,7 @@ class _LawyerSearchScreenState extends State<LawyerSearchScreen> {
                   child: Row(
                     children: [
                       Icon(
-                        Icons.attach_money,
+                        Icons.currency_rupee,
                         color: Colors.grey[500],
                         size: 16,
                       ),
@@ -442,11 +619,16 @@ class _LawyerSearchScreenState extends State<LawyerSearchScreen> {
                       Expanded(
                         child: Text(
                           lawyer.consultationFee == 0
-                              ? 'Free consultation'
-                              : '\$${lawyer.consultationFee.toInt()}/hr',
+                              ? 'Rate not set'
+                              : '₹${lawyer.consultationFee.toInt()} per case',
                           style: GoogleFonts.roboto(
                             fontSize: 14,
-                            color: Colors.grey[600],
+                            color: lawyer.consultationFee > 0
+                                ? Colors.green[700]
+                                : Colors.grey[600],
+                            fontWeight: lawyer.consultationFee > 0
+                                ? FontWeight.w600
+                                : FontWeight.normal,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

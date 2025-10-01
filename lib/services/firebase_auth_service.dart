@@ -35,18 +35,6 @@ class FirebaseAuthService extends ChangeNotifier {
       debugPrint('🔐 Starting login process for: $email');
       debugPrint('🔑 Password length: ${password.length}');
 
-      // Check if user exists first
-      try {
-        final methods = await _auth.fetchSignInMethodsForEmail(email);
-        debugPrint('📧 Sign-in methods for $email: $methods');
-        if (methods.isEmpty) {
-          debugPrint('❌ No sign-in methods found for email: $email');
-          throw 'No account found with this email address. Please sign up first.';
-        }
-      } catch (e) {
-        debugPrint('⚠️ Could not check sign-in methods: $e');
-      }
-
       debugPrint('🚀 Attempting Firebase Auth sign in...');
       final firebase_auth.UserCredential result = await _auth
           .signInWithEmailAndPassword(email: email, password: password);
@@ -142,6 +130,7 @@ class FirebaseAuthService extends ChangeNotifier {
   }) async {
     try {
       debugPrint('📝 Creating user profile in Firestore for: ${user.uid}');
+      debugPrint('👤 User type: ${userType.name}');
 
       final profileData = {
         'uid': user.uid,
@@ -156,17 +145,30 @@ class FirebaseAuthService extends ChangeNotifier {
 
       debugPrint('📊 Profile data to save: $profileData');
 
-      await _firestore.collection('users').doc(user.uid).set(profileData);
-      debugPrint('✅ User profile saved to Firestore successfully');
+      // Save to appropriate collection based on user type
+      String collectionName = userType == UserType.lawyer ? 'lawyers' : 'users';
+
+      await _firestore
+          .collection(collectionName)
+          .doc(user.uid)
+          .set(profileData);
+      debugPrint(
+        '✅ User profile saved to $collectionName collection successfully',
+      );
 
       // Verify the data was saved
-      final savedDoc = await _firestore.collection('users').doc(user.uid).get();
+      final savedDoc = await _firestore
+          .collection(collectionName)
+          .doc(user.uid)
+          .get();
       if (savedDoc.exists) {
-        debugPrint('✅ Verified: User profile exists in Firestore');
+        debugPrint(
+          '✅ Verified: User profile exists in $collectionName collection',
+        );
         debugPrint('📄 Saved data: ${savedDoc.data()}');
       } else {
         debugPrint(
-          '❌ Verification failed: User profile not found in Firestore',
+          '❌ Verification failed: User profile not found in $collectionName collection',
         );
       }
     } catch (e) {
@@ -181,14 +183,35 @@ class FirebaseAuthService extends ChangeNotifier {
     if (_auth.currentUser == null) return;
 
     try {
-      final doc = await _firestore
+      // First try to find in lawyers collection
+      var doc = await _firestore
+          .collection('lawyers')
+          .doc(_auth.currentUser!.uid)
+          .get();
+
+      if (doc.exists) {
+        _userProfile = doc.data();
+        debugPrint('✅ Loaded lawyer profile from lawyers collection');
+        notifyListeners();
+        return;
+      }
+
+      // If not found in lawyers, try users collection
+      doc = await _firestore
           .collection('users')
           .doc(_auth.currentUser!.uid)
           .get();
+
       if (doc.exists) {
         _userProfile = doc.data();
+        debugPrint('✅ Loaded client profile from users collection');
         notifyListeners();
+        return;
       }
+
+      debugPrint(
+        '⚠️ No profile found in either collection for user: ${_auth.currentUser!.uid}',
+      );
     } catch (e) {
       debugPrint('Error loading user profile: $e');
     }
@@ -222,8 +245,16 @@ class FirebaseAuthService extends ChangeNotifier {
 
     try {
       data['updatedAt'] = FieldValue.serverTimestamp();
+
+      // Determine which collection to update based on current user profile
+      String collectionName = 'users'; // default
+      if (_userProfile != null) {
+        String userType = _userProfile!['userType'] ?? 'client';
+        collectionName = userType == 'lawyer' ? 'lawyers' : 'users';
+      }
+
       await _firestore
-          .collection('users')
+          .collection(collectionName)
           .doc(_auth.currentUser!.uid)
           .update(data);
       await _loadUserProfile();
@@ -260,7 +291,14 @@ class FirebaseAuthService extends ChangeNotifier {
   /// Check if user profile exists in Firestore
   Future<bool> userProfileExists(String uid) async {
     try {
-      final doc = await _firestore.collection('users').doc(uid).get();
+      // Check in lawyers collection first
+      var doc = await _firestore.collection('lawyers').doc(uid).get();
+      if (doc.exists) {
+        return true;
+      }
+
+      // Check in users collection
+      doc = await _firestore.collection('users').doc(uid).get();
       return doc.exists;
     } catch (e) {
       debugPrint('Error checking if user profile exists: $e');
@@ -271,10 +309,21 @@ class FirebaseAuthService extends ChangeNotifier {
   /// Get user profile from Firestore by UID
   Future<Map<String, dynamic>?> getUserProfile(String uid) async {
     try {
-      final doc = await _firestore.collection('users').doc(uid).get();
+      // First try to find in lawyers collection
+      var doc = await _firestore.collection('lawyers').doc(uid).get();
       if (doc.exists) {
+        debugPrint('✅ Found lawyer profile in lawyers collection');
         return doc.data();
       }
+
+      // If not found in lawyers, try users collection
+      doc = await _firestore.collection('users').doc(uid).get();
+      if (doc.exists) {
+        debugPrint('✅ Found client profile in users collection');
+        return doc.data();
+      }
+
+      debugPrint('⚠️ No profile found in either collection for UID: $uid');
       return null;
     } catch (e) {
       debugPrint('Error getting user profile: $e');
