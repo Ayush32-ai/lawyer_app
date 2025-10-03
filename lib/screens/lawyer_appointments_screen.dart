@@ -12,8 +12,11 @@ class LawyerAppointmentsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final authService = Provider.of<FirebaseAuthService>(context, listen: false);
     final lawyerId = authService.currentUser?.uid;
+    
+    debugPrint('🔍 Checking appointments for lawyer: $lawyerId');
 
     if (lawyerId == null) {
+      debugPrint('⚠️ No lawyer ID available - user not logged in');
       return const Center(child: Text('Please login to view appointments'));
     }
 
@@ -30,10 +33,12 @@ class LawyerAppointmentsScreen extends StatelessWidget {
             .getLawyerAppointments(lawyerId),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
+            debugPrint('⏳ Loading appointments from main collection...');
             return const Center(child: CircularProgressIndicator());
           }
 
           if (snapshot.hasError) {
+            debugPrint('❌ Error loading appointments: ${snapshot.error}');
             return Center(
               child: Text(
                 'Error loading appointments: ${snapshot.error}',
@@ -42,37 +47,64 @@ class LawyerAppointmentsScreen extends StatelessWidget {
             );
           }
 
-          final appointments = snapshot.data ?? [];
+          var appointments = snapshot.data ?? [];
+          debugPrint('📊 Found ${appointments.length} appointments in main collection');
 
+          // If stream is empty (maybe writes go to lawyers/{id}/appointments),
+          // try a one-time fetch of the lawyer subcollection.
           if (appointments.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.calendar_today, size: 64, color: Colors.grey[400]),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No appointments yet',
-                    style: GoogleFonts.roboto(
-                      fontSize: 18,
-                      color: Colors.grey[600],
+            debugPrint('ℹ️ Main collection empty, checking lawyer subcollection...');
+            return FutureBuilder<List<Appointment>>(
+              future: Provider.of<AppointmentService>(context, listen: false)
+                  .getLawyerSubcollectionAppointments(lawyerId),
+              builder: (context, subSnapshot) {
+                if (subSnapshot.connectionState == ConnectionState.waiting) {
+                  debugPrint('⏳ Loading from lawyer subcollection...');
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final subAppointments = subSnapshot.data ?? [];
+                debugPrint('📊 Found ${subAppointments.length} appointments in lawyer subcollection');
+                
+                if (subAppointments.isEmpty) {
+                  debugPrint('ℹ️ No appointments found in either collection');
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.calendar_today, size: 64, color: Colors.grey[400]),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No appointments yet',
+                          style: GoogleFonts.roboto(
+                            fontSize: 18,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
+                  );
+                }
+
+                appointments = subAppointments;
+                return _buildAppointmentsList(appointments);
+              },
             );
           }
-
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: appointments.length,
-            itemBuilder: (context, index) {
-              final appointment = appointments[index];
-              return _AppointmentCard(appointment: appointment);
-            },
-          );
+          return _buildAppointmentsList(appointments);
         },
       ),
+    );
+  }
+
+  Widget _buildAppointmentsList(List<Appointment> appointments) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: appointments.length,
+      itemBuilder: (context, index) {
+        final appointment = appointments[index];
+        return _AppointmentCard(appointment: appointment);
+      },
     );
   }
 }

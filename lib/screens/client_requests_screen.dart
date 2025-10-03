@@ -59,10 +59,12 @@ class _ClientRequestsScreenState extends State<ClientRequestsScreen> {
                 stream: _getRequestsStream(),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
+                    debugPrint('⏳ Loading lawyer requests...');
                     return const Center(child: CircularProgressIndicator());
                   }
 
                   if (snapshot.hasError) {
+                    debugPrint('❌ Error loading requests: ${snapshot.error}');
                     return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -95,8 +97,12 @@ class _ClientRequestsScreenState extends State<ClientRequestsScreen> {
                   }
 
                   final requests = snapshot.data?.docs ?? [];
+                  debugPrint('📊 Found ${requests.length} lawyer requests');
 
                   if (requests.isEmpty) {
+                    debugPrint(
+                      'ℹ️ No requests found in lawyer_requests collection',
+                    );
                     return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -334,7 +340,7 @@ class _ClientRequestsScreenState extends State<ClientRequestsScreen> {
                   ),
                   const SizedBox(width: 8),
                   TextButton(
-                    onPressed: () => _respondToRequest(requestId, 'declined'),
+                    onPressed: () => _respondToRequest(requestId, 'rejected'),
                     child: Text(
                       'Decline',
                       style: GoogleFonts.roboto(
@@ -380,7 +386,7 @@ class _ClientRequestsScreenState extends State<ClientRequestsScreen> {
         color = Colors.blue;
         label = 'Completed';
         break;
-      case 'declined':
+      case 'rejected':
         color = Colors.red;
         label = 'Declined';
         break;
@@ -409,7 +415,10 @@ class _ClientRequestsScreenState extends State<ClientRequestsScreen> {
 
   Stream<QuerySnapshot> _getRequestsStream() {
     final currentUserId = _auth.currentUser?.uid;
+    debugPrint('🔍 Getting requests for lawyer ID: $currentUserId');
+
     if (currentUserId == null) {
+      debugPrint('⚠️ No logged in user found');
       return Stream.empty();
     }
 
@@ -418,9 +427,11 @@ class _ClientRequestsScreenState extends State<ClientRequestsScreen> {
         .where('lawyerId', isEqualTo: currentUserId);
 
     if (_selectedFilter != 'all') {
+      debugPrint('📋 Filtering by status: $_selectedFilter');
       query = query.where('status', isEqualTo: _selectedFilter);
     }
 
+    debugPrint('🔄 Starting request stream with filter: $_selectedFilter');
     return query.orderBy('createdAt', descending: true).snapshots();
   }
 
@@ -441,28 +452,70 @@ class _ClientRequestsScreenState extends State<ClientRequestsScreen> {
 
   Future<void> _respondToRequest(String requestId, String newStatus) async {
     try {
-      await _firestore.collection('lawyer_requests').doc(requestId).update({
-        'status': newStatus,
-        'respondedAt': FieldValue.serverTimestamp(),
-        'lawyerResponse': newStatus,
+      // Debug: current user
+      final currentUserId = _auth.currentUser?.uid;
+      debugPrint('👤 Current user ID: $currentUserId');
+
+      // Fetch current request doc
+      final docRef = _firestore.collection('lawyer_requests').doc(requestId);
+      final docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        debugPrint('⚠️ Request document not found: $requestId');
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Request not found')));
+        }
+        return;
+      }
+
+      final data = docSnap.data() as Map<String, dynamic>;
+      debugPrint('📄 Request data: $data');
+
+      // Ensure only assigned lawyer can update
+      if (data['lawyerId'] != currentUserId) {
+        debugPrint(
+          '❌ Permission denied: current user is not the assigned lawyer',
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Not authorized to update this request'),
+            ),
+          );
+        }
+        return;
+      }
+
+      // Map client-visible statuses to rule-approved statuses
+      final mappedStatus = newStatus == 'declined' ? 'rejected' : newStatus;
+
+      // Only update allowed fields (status and updatedAt)
+      await docRef.update({
+        'status': mappedStatus,
+        'updatedAt': FieldValue.serverTimestamp(),
       });
 
+      debugPrint('✅ Request $requestId updated to $mappedStatus');
+      debugPrint('Firestore lawyerId: ${data['lawyerId']}');
+      debugPrint('Current user UID: $currentUserId');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Request $newStatus successfully',
+              'Request $mappedStatus successfully',
               style: GoogleFonts.roboto(),
             ),
-            backgroundColor: newStatus == 'accepted'
+            backgroundColor: mappedStatus == 'accepted'
                 ? Colors.green
-                : newStatus == 'declined'
+                : mappedStatus == 'rejected'
                 ? Colors.red
                 : Colors.blue,
           ),
         );
       }
     } catch (e) {
+      debugPrint('❌ Error updating request: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -477,4 +530,3 @@ class _ClientRequestsScreenState extends State<ClientRequestsScreen> {
     }
   }
 }
-

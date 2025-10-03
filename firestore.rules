@@ -1,0 +1,153 @@
+
+rules_version = '2';
+service cloud.firestore {
+	match /databases/{database}/documents {
+
+		// Helper to check authenticated
+		function isAuth() {
+			return request.auth != null;
+		}
+
+		// Helper to check if the request is from the lawyer assigned to the resource
+		function isAssignedLawyer(resourceLawyerId) {
+			return isAuth() && request.auth.uid == resourceLawyerId;
+		}
+
+		// Helper to check if a lawyer document exists
+		function lawyerExists(lawyerId) {
+			return exists(/databases/$(database)/documents/lawyers/$(lawyerId));
+		}
+
+		// Top-level lawyer_requests collection
+		match /lawyer_requests/{requestId} {
+			allow create: if isAuth() &&
+				// Required fields must be present
+				request.resource.data.keys().hasAll(['clientId','lawyerId','createdAt','status']) &&
+				// Either the client or lawyer can create the request
+				(request.auth.uid == request.resource.data.clientId ||
+				 request.auth.uid == request.resource.data.lawyerId) &&
+				// initial requests must have valid status
+				(request.resource.data.status in ['pending','draft']);
+
+			// Clients can read their own requests
+			allow read: if isAuth() && (
+				request.auth.uid == resource.data.clientId ||
+				request.auth.uid == resource.data.lawyerId
+			);
+
+			// Allow the assigned lawyer to update status
+			allow update: if isAuth() &&
+				request.auth.uid == resource.data.lawyerId &&
+				// Allow updating just the status field
+				request.resource.data.keys().hasAll(resource.data.keys()) &&
+				resource.data.keys().hasAll(request.resource.data.keys()) &&
+				(
+					// Only these fields can be different
+					request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) ||
+					request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+				) &&
+				// Status must be one of allowed values
+				(request.resource.data.status in ['pending', 'accepted', 'rejected', 'completed', 'cancelled']);
+
+			// No deletes from clients; allow admins only (not handled here)
+			allow delete: if false;
+		}
+
+		// Appointments collection: clients create, assigned lawyers update status
+		match /appointments/{appointmentId} {
+			allow create: if isAuth() &&
+				request.resource.data.clientId == request.auth.uid &&
+				request.resource.data.keys().hasAll(['clientId','lawyerId','dateTime','status']);
+
+			allow read: if isAuth() && (
+				request.auth.uid == resource.data.clientId ||
+				request.auth.uid == resource.data.lawyerId
+			);
+
+			allow update: if isAuth() && (
+				// assigned lawyer may update status and updatedAt
+				(request.auth.uid == resource.data.lawyerId &&
+					request.resource.data.keys().hasOnly(['status','updatedAt']))
+				||
+				// client may update (cancel) their own appointment status to 'cancelled'
+				(request.auth.uid == resource.data.clientId &&
+					request.resource.data.keys().hasOnly(['status','updatedAt']) &&
+					request.resource.data.status == 'cancelled')
+			);
+
+			allow delete: if false;
+		}
+
+		// Documents: users may create and read their own documents; lawyers may read documents if they belong to their client
+		match /documents/{docId} {
+			allow create: if isAuth() && request.resource.data.userId == request.auth.uid;
+
+			allow read: if isAuth() && (
+				request.auth.uid == resource.data.userId ||
+				// if this doc has an appointmentId, allow access to the assigned lawyer of that appointment
+				(
+					resource.data.keys().hasAny(['appointmentId']) &&
+					// load appointment doc id reference; this requires the client to also enforce linking
+					get(/databases/$(database)/documents/appointments/$(resource.data.appointmentId)).data.lawyerId == request.auth.uid
+				)
+			);
+
+			allow update: if isAuth() && request.auth.uid == resource.data.userId;
+			allow delete: if isAuth() && request.auth.uid == resource.data.userId;
+		}
+
+		// Users collection: users can read/write their own profile
+		match /users/{userId} {
+			allow read, update: if isAuth() && request.auth.uid == userId;
+			allow create: if isAuth();
+			allow delete: if false;
+
+			// Allow access to subcollections like users/{userId}/documents
+			match /{subCollection=**}/{docId?} {
+				allow read, write: if isAuth() && request.auth.uid == userId;
+			}
+		}
+
+		// Lawyers collection: lawyers can read their own doc; clients can read public lawyer info
+		match /lawyers/{lawyerId} {
+			allow read: if true; // public read of lawyer profiles
+			allow update: if isAuth() && request.auth.uid == lawyerId;
+			allow create: if isAuth();
+			allow delete: if false;
+
+			// Appointments subcollection under each lawyer
+			match /appointments/{appointmentId} {
+				// Allow client to create an appointment entry under the lawyer's subcollection
+				allow create: if isAuth() &&
+					request.resource.data.clientId == request.auth.uid &&
+					request.resource.data.lawyerId == lawyerId &&
+					lawyerExists(lawyerId) &&
+					request.resource.data.keys().hasAll([
+						'clientId','lawyerId','dateTime','status',
+						'description','rate','lawyerName','clientName','clientPhone'
+					]) &&
+					request.resource.data.status == 'pending' &&
+					request.resource.data.rate is number &&
+					request.resource.data.rate >= 0;
+
+				// Allow reads by client or the assigned lawyer
+				allow read: if isAuth() && (
+					request.auth.uid == request.resource.data.clientId ||
+					request.auth.uid == lawyerId
+				);
+
+				// Allow the lawyer to update status only
+				allow update: if isAuth() && request.auth.uid == lawyerId &&
+					request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt']) &&
+					request.resource.data.status in ['pending','confirmed','cancelled','completed'];
+
+				allow delete: if false;
+			}
+		}
+
+		// Fallback deny
+		match /{document=**} {
+			allow read, write: if false;
+		}
+	}
+}
