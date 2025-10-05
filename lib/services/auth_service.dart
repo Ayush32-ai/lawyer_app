@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../models/user_type.dart';
+import 'auth_persistence_service.dart';
 
 class AuthService extends ChangeNotifier {
   static final AuthService _instance = AuthService._internal();
@@ -8,6 +9,9 @@ class AuthService extends ChangeNotifier {
 
   bool _isAuthenticated = false;
   User? _currentUser;
+
+  final AuthPersistenceService _persistenceService =
+      AuthPersistenceService();
 
   bool get isAuthenticated => _isAuthenticated;
   User? get currentUser => _currentUser;
@@ -29,6 +33,10 @@ class AuthService extends ChangeNotifier {
           name: 'Demo User',
           userType: UserType.client, // Default to client for login
           createdAt: DateTime.now(),
+        );
+        // Save a mock token (in real scenario use real token)
+        await _persistenceService.saveAuthToken(
+          'mock_token_${DateTime.now().millisecondsSinceEpoch}',
         );
         notifyListeners();
         return true;
@@ -88,15 +96,20 @@ class AuthService extends ChangeNotifier {
   Future<void> logout() async {
     _isAuthenticated = false;
     _currentUser = null;
+    await _persistenceService.deleteAuthToken();
     notifyListeners();
   }
 
   /// Check if user is already logged in (for app restart)
   Future<void> checkAuthStatus() async {
-    // In a real app, you'd check secure storage or token validity
-    // For demo purposes, we'll assume user is logged out on app restart
-    _isAuthenticated = false;
-    _currentUser = null;
+    final token = await _persistenceService.getAuthToken();
+    if (token != null) {
+      _isAuthenticated = true;
+      // In a real scenario decode token or fetch user
+    } else {
+      _isAuthenticated = false;
+      _currentUser = null;
+    }
     notifyListeners();
   }
 }
